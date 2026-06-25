@@ -1,4 +1,4 @@
-import type { ChatMessage, Provider } from "../types";
+import type { ChatMessage, GenerateOptions, Provider } from "../types";
 
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -9,7 +9,7 @@ export const geminiProvider: Provider = {
     return Boolean(process.env.GOOGLE_GENERATIVE_AI_API_KEY);
   },
 
-  async generate(model, messages: ChatMessage[]) {
+  async generate(model, messages: ChatMessage[], opts?: GenerateOptions) {
     const key = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
     if (!key) throw new Error("Gemini: GOOGLE_GENERATIVE_AI_API_KEY missing");
 
@@ -31,6 +31,10 @@ export const geminiProvider: Provider = {
       body: JSON.stringify({
         contents,
         ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+        // Force JSON output when a schema is requested.
+        ...(opts?.jsonSchema
+          ? { generationConfig: { responseMimeType: "application/json" } }
+          : {}),
       }),
     });
     if (!res.ok) throw new Error(`Gemini error ${res.status}`);

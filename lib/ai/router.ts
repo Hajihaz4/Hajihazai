@@ -43,7 +43,7 @@ export function planRoute(opts: {
 /** Execute the routed chain, falling back until a provider returns text. */
 export async function routeChat(
   messages: ChatMessage[],
-  opts: { preferredModelId?: string } = {},
+  opts: { preferredModelId?: string; jsonSchema?: Record<string, unknown> } = {},
 ): Promise<GenerateResult> {
   const available: Record<ProviderName, boolean> = {
     ollama: providers.ollama.isAvailable(),
@@ -60,7 +60,9 @@ export async function routeChat(
   let lastError: unknown;
   for (const entry of chain) {
     try {
-      const text = await providers[entry.provider].generate(entry.model, messages);
+      const text = await providers[entry.provider].generate(entry.model, messages, {
+        jsonSchema: opts.jsonSchema,
+      });
       if (text && text.trim()) {
         return { text, modelId: entry.modelId, provider: entry.provider };
       }

@@ -1,4 +1,4 @@
-import type { ChatMessage, Provider } from "../types";
+import type { ChatMessage, GenerateOptions, Provider } from "../types";
 
 const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -9,7 +9,7 @@ export const openrouterProvider: Provider = {
     return Boolean(process.env.OPENROUTER_API_KEY);
   },
 
-  async generate(model, messages: ChatMessage[]) {
+  async generate(model, messages: ChatMessage[], opts?: GenerateOptions) {
     const key = process.env.OPENROUTER_API_KEY;
     if (!key) throw new Error("OpenRouter: OPENROUTER_API_KEY missing");
 
@@ -22,7 +22,12 @@ export const openrouterProvider: Provider = {
         "X-Title": "HajiHaz AI",
       },
       // OpenRouter is OpenAI-compatible — roles map 1:1.
-      body: JSON.stringify({ model, messages, stream: false }),
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: false,
+        ...(opts?.jsonSchema ? { response_format: { type: "json_object" } } : {}),
+      }),
     });
     if (!res.ok) throw new Error(`OpenRouter error ${res.status}`);
 

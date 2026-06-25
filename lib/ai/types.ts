@@ -15,10 +15,19 @@ export interface GenerateResult {
   provider: ProviderName;
 }
 
+export interface GenerateOptions {
+  /** When set, ask the provider to enforce structured JSON output. */
+  jsonSchema?: Record<string, unknown>;
+}
+
 export interface Provider {
   name: ProviderName;
   /** Whether this provider is usable in the current environment. */
   isAvailable(): boolean;
   /** Run a single non-streaming completion. Throws on transport/API error. */
-  generate(model: string, messages: ChatMessage[]): Promise<string>;
+  generate(
+    model: string,
+    messages: ChatMessage[],
+    opts?: GenerateOptions,
+  ): Promise<string>;
 }

@@ -128,14 +128,22 @@ export default function MemoryViewer({
           <Brain className="size-6" />
           <h1 className="text-2xl font-semibold tracking-tight">Memory</h1>
         </div>
-        <button
-          onClick={runExtraction}
-          disabled={extracting}
-          className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-accent disabled:opacity-40"
-        >
-          <Sparkles className="size-4" />
-          {extracting ? "Extracting…" : "Extract from recent chat"}
-        </button>
+        <div className="flex items-center gap-2">
+          <a
+            href="/memory/debug"
+            className="rounded-lg border px-3 py-2 text-sm text-muted-foreground hover:bg-accent"
+          >
+            Debug
+          </a>
+          <button
+            onClick={runExtraction}
+            disabled={extracting}
+            className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-accent disabled:opacity-40"
+          >
+            <Sparkles className="size-4" />
+            {extracting ? "Extracting…" : "Extract from recent chat"}
+          </button>
+        </div>
       </div>
 
       {notice ? (

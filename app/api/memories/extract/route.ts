@@ -4,7 +4,9 @@ import { extractMemories } from "@/lib/memory/extract";
 
 /**
  * Manual extraction trigger.
- * Body: { conversationId? } — defaults to the user's most recent conversation.
+ * Body: { conversationId?, preview? }
+ *  - conversationId defaults to the user's most recent conversation.
+ *  - preview=true returns diagnostics WITHOUT persisting anything.
  */
 export async function POST(req: Request) {
   const session = await auth();
@@ -13,6 +15,7 @@ export async function POST(req: Request) {
   }
 
   const body = await req.json().catch(() => null);
+  const preview = body?.preview === true;
   let conversationId = body?.conversationId;
 
   if (typeof conversationId !== "string") {
@@ -23,13 +26,18 @@ export async function POST(req: Request) {
     conversationId = convos[0].id;
   }
 
-  const result = await extractMemories(session.user.id, conversationId);
+  const result = await extractMemories(session.user.id, conversationId, {
+    preview,
+  });
   if (result.reason === "not_found") {
     return new Response("Not found", { status: 404 });
   }
 
   return Response.json({
     conversationId: result.conversationId,
+    preview,
+    model: result.model ?? null,
+    diagnostics: result.diagnostics,
     created: result.created,
     count: result.created.length,
   });
