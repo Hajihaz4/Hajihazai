@@ -250,3 +250,36 @@ export const knowledgeDocumentRelations = relations(
 
 export type KnowledgeDocument = typeof knowledgeDocument.$inferSelect;
 export type NewKnowledgeDocument = typeof knowledgeDocument.$inferInsert;
+
+/* ------------------------------------------------------------------ */
+/* Phase 7.1 — Document content storage (single text blob)             */
+/* ------------------------------------------------------------------ */
+
+export const knowledgeContent = pgTable(
+  "knowledge_content",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    documentId: text("documentId")
+      .notNull()
+      .references(() => knowledgeDocument.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("knowledge_content_document_idx").on(t.documentId)],
+);
+
+export const knowledgeContentRelations = relations(
+  knowledgeContent,
+  ({ one }) => ({
+    document: one(knowledgeDocument, {
+      fields: [knowledgeContent.documentId],
+      references: [knowledgeDocument.id],
+    }),
+  }),
+);
+
+export type KnowledgeContent = typeof knowledgeContent.$inferSelect;
+export type NewKnowledgeContent = typeof knowledgeContent.$inferInsert;

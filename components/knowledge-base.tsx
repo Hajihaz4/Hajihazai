@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { BookOpen, Plus, Trash2 } from "lucide-react";
+import { BookOpen, FileText, Plus, Trash2, X } from "lucide-react";
 
 type SourceType = "pdf" | "text" | "website" | "note";
 type DocStatus = "processing" | "active" | "failed";
@@ -23,6 +23,13 @@ export default function KnowledgeBase({
   const [title, setTitle] = useState("");
   const [sourceType, setSourceType] = useState<SourceType>("note");
   const [saving, setSaving] = useState(false);
+
+  // Editor state.
+  const [openDoc, setOpenDoc] = useState<Doc | null>(null);
+  const [content, setContent] = useState("");
+  const [contentExists, setContentExists] = useState(false);
+  const [loadingContent, setLoadingContent] = useState(false);
+  const [savingContent, setSavingContent] = useState(false);
 
   async function addDocument() {
     const t = title.trim();
@@ -47,7 +54,42 @@ export default function KnowledgeBase({
 
   async function removeDocument(id: string) {
     const res = await fetch(`/api/knowledge/${id}`, { method: "DELETE" });
-    if (res.ok) setDocuments((p) => p.filter((d) => d.id !== id));
+    if (res.ok) {
+      setDocuments((p) => p.filter((d) => d.id !== id));
+      if (openDoc?.id === id) setOpenDoc(null);
+    }
+  }
+
+  async function openDocument(d: Doc) {
+    setOpenDoc(d);
+    setLoadingContent(true);
+    setContent("");
+    setContentExists(false);
+    try {
+      const res = await fetch(`/api/knowledge/${d.id}/content`);
+      if (res.ok) {
+        const data = await res.json();
+        setContent(data.content?.content ?? "");
+        setContentExists(!!data.content);
+      }
+    } finally {
+      setLoadingContent(false);
+    }
+  }
+
+  async function saveContent() {
+    if (!openDoc || savingContent) return;
+    setSavingContent(true);
+    try {
+      const res = await fetch(`/api/knowledge/${openDoc.id}/content`, {
+        method: contentExists ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+      });
+      if (res.ok) setContentExists(true);
+    } finally {
+      setSavingContent(false);
+    }
   }
 
   return (
@@ -56,6 +98,42 @@ export default function KnowledgeBase({
         <BookOpen className="size-6" />
         <h1 className="text-2xl font-semibold tracking-tight">Knowledge Base</h1>
       </div>
+
+      {/* Editor */}
+      {openDoc ? (
+        <div className="mb-8 rounded-xl border p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <FileText className="size-4" />
+              {openDoc.title}
+            </div>
+            <button
+              onClick={() => setOpenDoc(null)}
+              aria-label="Close editor"
+              className="rounded-lg p-1.5 text-muted-foreground hover:bg-accent"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+          <textarea
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            rows={10}
+            placeholder={loadingContent ? "Loading…" : "Document content…"}
+            disabled={loadingContent}
+            className="w-full resize-y rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+          />
+          <div className="mt-3">
+            <button
+              onClick={saveContent}
+              disabled={savingContent || loadingContent}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
+            >
+              {savingContent ? "Saving…" : "Save content"}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {/* Add */}
       <div className="mb-8 rounded-xl border p-4">
@@ -110,13 +188,21 @@ export default function KnowledgeBase({
                 </div>
                 <p className="mt-1.5 truncate font-medium">{d.title}</p>
               </div>
-              <button
-                onClick={() => removeDocument(d.id)}
-                aria-label="Delete document"
-                className="shrink-0 rounded-lg p-2 text-muted-foreground hover:text-destructive"
-              >
-                <Trash2 className="size-4" />
-              </button>
+              <div className="flex shrink-0 items-center gap-1">
+                <button
+                  onClick={() => openDocument(d)}
+                  className="rounded-lg border px-3 py-1.5 text-xs hover:bg-accent"
+                >
+                  Open
+                </button>
+                <button
+                  onClick={() => removeDocument(d.id)}
+                  aria-label="Delete document"
+                  className="rounded-lg p-2 text-muted-foreground hover:text-destructive"
+                >
+                  <Trash2 className="size-4" />
+                </button>
+              </div>
             </li>
           ))}
         </ul>
