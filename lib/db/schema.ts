@@ -322,3 +322,36 @@ export const knowledgeChunkRelations = relations(knowledgeChunk, ({ one }) => ({
 
 export type KnowledgeChunk = typeof knowledgeChunk.$inferSelect;
 export type NewKnowledgeChunk = typeof knowledgeChunk.$inferInsert;
+
+/* ------------------------------------------------------------------ */
+/* Phase 8.3 — Tool invocation audit                                   */
+/* ------------------------------------------------------------------ */
+
+export const toolInvocationStatus = pgEnum("tool_invocation_status", [
+  "success",
+  "error",
+  "timeout",
+]);
+
+export const toolInvocation = pgTable(
+  "tool_invocation",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    toolName: text("toolName").notNull(),
+    input: jsonb("input"),
+    output: jsonb("output"),
+    status: toolInvocationStatus("status").notNull(),
+    durationMs: integer("durationMs").notNull(),
+    error: text("error"),
+    createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("tool_invocation_user_idx").on(t.userId)],
+);
+
+export type ToolInvocation = typeof toolInvocation.$inferSelect;
+export type NewToolInvocation = typeof toolInvocation.$inferInsert;

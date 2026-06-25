@@ -1,5 +1,8 @@
+import { z } from "zod";
 import type { Tool } from "./types";
 import { ToolError } from "./types";
+
+export const CALCULATOR_MAX_CHARS = 200;
 
 /**
  * Safe arithmetic evaluator — NO eval / Function. Supports + - * / and
@@ -156,6 +159,12 @@ export const calculatorTool: Tool = {
     properties: { expression: { type: "string" } },
     required: ["expression"],
   },
+  inputSchema: z.object({
+    expression: z
+      .string()
+      .min(1, "expression is required")
+      .max(CALCULATOR_MAX_CHARS, `expression must be ≤ ${CALCULATOR_MAX_CHARS} characters`),
+  }),
   async execute(_userId, input) {
     const expression = (input as { expression?: unknown })?.expression;
     if (typeof expression !== "string") {

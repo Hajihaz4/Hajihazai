@@ -1,4 +1,5 @@
-/** Tool execution contracts (Phase 8.0). Deterministic tools only. */
+/** Tool execution contracts (Phase 8.0+). Deterministic tools only. */
+import type { ZodType } from "zod";
 
 export interface ToolSchema {
   type: "object";
@@ -9,7 +10,10 @@ export interface ToolSchema {
 export interface Tool {
   name: string;
   description: string;
+  /** Model-facing JSON schema (for tool specs). */
   schema: ToolSchema;
+  /** Zod schema used to validate input before execution (Phase 8.3). */
+  inputSchema: ZodType;
   execute(userId: string, input: unknown): Promise<unknown>;
 }
 

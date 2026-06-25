@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { Tool } from "./types";
 
 /**
@@ -12,6 +13,7 @@ export const currentTimeTool: Tool = {
     properties: {},
     required: [],
   },
+  inputSchema: z.object({}),
   async execute() {
     const now = new Date();
     const timezone =

@@ -1,26 +1,32 @@
 import { routeChat } from "@/lib/ai/router";
 import { executeTool, getTool } from "./router";
 import { exportToolSpecs } from "./specs";
+import { recordToolInvocation } from "@/lib/db/tool-queries";
 import type { Tool } from "./types";
 
 /**
- * Phase 8.2 — SINGLE tool calling.
- * The model decides whether to call exactly one tool; we execute it once (with
- * a timeout) and feed the result back as context. No loops, no recursion, no
- * multi-tool orchestration, no autonomous planning.
+ * Phase 8.3 — Hardened single tool calling.
+ * One tool max per turn. Zod-validated input, 10s execution timeout, 5s
+ * detection timeout, duration/status tracking, and best-effort audit.
+ * No loops, recursion, or multi-tool orchestration.
  */
 
 export const TOOL_TIMEOUT_MS = 10_000;
+export const DETECTION_TIMEOUT_MS = 5_000;
 
 export interface DetectedToolCall {
   tool: string;
   input: unknown;
 }
 
+export type ToolStatus = "success" | "error" | "timeout" | "rejected";
+
 export interface ToolExecution {
   toolRequested: DetectedToolCall | null;
   toolExecuted: boolean;
   toolResult: unknown | null;
+  status?: ToolStatus;
+  durationMs?: number;
   error?: string;
 }
 
@@ -42,7 +48,6 @@ export function detectToolCall(text: string): DetectedToolCall | null {
   if (!text || typeof text !== "string") return null;
   const s = text.replace(/```(?:json)?/gi, "").trim();
 
-  // Explicit no-tool sentinel (and no JSON object present).
   if (/^NO_TOOL\b/i.test(s) && !s.includes("{")) return null;
 
   const start = s.indexOf("{");
@@ -66,31 +71,17 @@ export function detectToolCall(text: string): DetectedToolCall | null {
   return { tool: obj.tool, input };
 }
 
-/** Minimal JSON-schema validation: required keys present + primitive types. */
+/** Validate input with the tool's Zod schema. Friendly error message. */
 export function validateToolInput(
   tool: Tool,
   input: unknown,
-): { ok: boolean; error?: string } {
-  const required = tool.schema.required ?? [];
-  if (required.length === 0) return { ok: true };
-
-  if (input === null || typeof input !== "object") {
-    return { ok: false, error: "input must be an object" };
-  }
-  const obj = input as Record<string, unknown>;
-  for (const key of required) {
-    if (!(key in obj) || obj[key] === undefined || obj[key] === null) {
-      return { ok: false, error: `missing required field: ${key}` };
-    }
-    const prop = tool.schema.properties[key] as { type?: string } | undefined;
-    if (prop?.type === "string" && typeof obj[key] !== "string") {
-      return { ok: false, error: `${key} must be a string` };
-    }
-    if (prop?.type === "number" && typeof obj[key] !== "number") {
-      return { ok: false, error: `${key} must be a number` };
-    }
-  }
-  return { ok: true };
+): { ok: true; data: unknown } | { ok: false; error: string } {
+  const parsed = tool.inputSchema.safeParse(input ?? {});
+  if (parsed.success) return { ok: true, data: parsed.data };
+  const first = parsed.error.issues[0];
+  const path = first?.path?.join(".");
+  const message = first?.message ?? "invalid input";
+  return { ok: false, error: path ? `${path}: ${message}` : message };
 }
 
 /** Race a promise against a timeout. */
@@ -121,30 +112,54 @@ export async function executeDetectedToolCall(
 ): Promise<Omit<ToolExecution, "toolRequested">> {
   const tool = getTool(call.tool);
   if (!tool) {
-    return { toolExecuted: false, toolResult: null, error: `unknown tool: ${call.tool}` };
-  }
-  const valid = validateToolInput(tool, call.input);
-  if (!valid.ok) {
-    return { toolExecuted: false, toolResult: null, error: valid.error };
-  }
-  try {
-    const result = await withTimeout(
-      executeTool(userId, call.tool, call.input),
-      timeoutMs,
-    );
-    return { toolExecuted: true, toolResult: result };
-  } catch (err) {
     return {
       toolExecuted: false,
       toolResult: null,
-      error: err instanceof Error ? err.message : "tool execution failed",
+      status: "rejected",
+      error: `unknown tool: ${call.tool}`,
+    };
+  }
+
+  const valid = validateToolInput(tool, call.input);
+  if (!valid.ok) {
+    return {
+      toolExecuted: false,
+      toolResult: null,
+      status: "rejected",
+      error: valid.error,
+    };
+  }
+
+  const start = Date.now();
+  try {
+    const result = await withTimeout(
+      executeTool(userId, call.tool, valid.data),
+      timeoutMs,
+    );
+    return {
+      toolExecuted: true,
+      toolResult: result,
+      status: "success",
+      durationMs: Date.now() - start,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "tool execution failed";
+    return {
+      toolExecuted: false,
+      toolResult: null,
+      status: /timed out/i.test(message) ? "timeout" : "error",
+      durationMs: Date.now() - start,
+      error: message,
     };
   }
 }
 
 /**
  * Ask the model whether to call a tool and, if so, run exactly ONE.
- * `opts.decide` overrides the model decision (used by tests).
+ * - Detection model call is bounded by `detectTimeoutMs` (default 5s); on
+ *   timeout we continue with no tool (no crash).
+ * - When `audit` is true, the execution (success/error/timeout) is recorded.
+ * - `opts.decide` overrides the model decision (tests).
  */
 export async function selectAndRunTool(
   userId: string,
@@ -152,6 +167,8 @@ export async function selectAndRunTool(
   opts: {
     decide?: (systemPrompt: string, message: string) => Promise<string>;
     timeoutMs?: number;
+    detectTimeoutMs?: number;
+    audit?: boolean;
   } = {},
 ): Promise<ToolExecution> {
   const systemPrompt = buildToolSelectionPrompt();
@@ -167,8 +184,12 @@ export async function selectAndRunTool(
 
   let decisionText: string;
   try {
-    decisionText = await decide(systemPrompt, userMessage);
+    decisionText = await withTimeout(
+      decide(systemPrompt, userMessage),
+      opts.detectTimeoutMs ?? DETECTION_TIMEOUT_MS,
+    );
   } catch {
+    // Detection timed out or errored → continue normal chat, no tool.
     return { toolRequested: null, toolExecuted: false, toolResult: null };
   }
 
@@ -179,5 +200,19 @@ export async function selectAndRunTool(
 
   // SINGLE execution — no loop.
   const exec = await executeDetectedToolCall(userId, call, opts.timeoutMs);
+
+  // Best-effort audit (only for actual executions, not rejections).
+  if (opts.audit && exec.status && exec.status !== "rejected") {
+    await recordToolInvocation({
+      userId,
+      toolName: call.tool,
+      input: call.input,
+      output: exec.toolResult,
+      status: exec.status,
+      durationMs: exec.durationMs ?? 0,
+      error: exec.error,
+    });
+  }
+
   return { toolRequested: call, ...exec };
 }

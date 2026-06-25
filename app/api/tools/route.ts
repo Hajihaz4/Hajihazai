@@ -1,7 +1,7 @@
 import { auth } from "@/auth";
-import { executeTool } from "@/lib/tools/router";
 import { listTools } from "@/lib/tools/registry";
-import { ToolError } from "@/lib/tools/types";
+import { executeDetectedToolCall } from "@/lib/tools/tool-calling";
+import { recordToolInvocation } from "@/lib/db/tool-queries";
 import { rateLimit } from "@/lib/ratelimit";
 
 /** List available tools (developer convenience). */
@@ -13,14 +13,13 @@ export async function GET() {
   return Response.json({ tools: listTools() });
 }
 
-/** Execute a tool: { tool, input }. */
+/** Execute a tool: { tool, input }. Validated (Zod), audited, timeout-bounded. */
 export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user?.id) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  // Tools can call the embedding model (memory/knowledge search) — cap per user.
   const limited = rateLimit(`tools:${session.user.id}`, 60, 60_000);
   if (!limited.ok) {
     return new Response("Too many tool requests. Please wait.", {
@@ -34,15 +33,45 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
   const tool = body?.tool;
   const input = body?.input;
-
-  try {
-    const output = await executeTool(session.user.id, tool, input);
-    return Response.json({ tool, output });
-  } catch (err) {
-    if (err instanceof ToolError) {
-      const status = err.code === "unknown_tool" ? 404 : 400;
-      return Response.json({ error: err.message, code: err.code }, { status });
-    }
-    return Response.json({ error: "Tool execution failed" }, { status: 500 });
+  if (typeof tool !== "string") {
+    return new Response("tool must be a string", { status: 400 });
   }
+
+  const exec = await executeDetectedToolCall(session.user.id, { tool, input });
+
+  // Best-effort audit for actual executions (not validation rejections).
+  if (exec.status && exec.status !== "rejected") {
+    await recordToolInvocation({
+      userId: session.user.id,
+      toolName: tool,
+      input,
+      output: exec.toolResult,
+      status: exec.status,
+      durationMs: exec.durationMs ?? 0,
+      error: exec.error,
+    });
+  }
+
+  if (exec.toolExecuted) {
+    return Response.json({ tool, output: exec.toolResult });
+  }
+
+  if (exec.status === "rejected") {
+    if ((exec.error ?? "").startsWith("unknown tool")) {
+      return Response.json(
+        { error: exec.error, code: "unknown_tool" },
+        { status: 404 },
+      );
+    }
+    return Response.json(
+      { error: exec.error, code: "invalid_input" },
+      { status: 400 },
+    );
+  }
+
+  // execution error / timeout
+  return Response.json(
+    { error: exec.error, code: exec.status },
+    { status: exec.status === "timeout" ? 504 : 500 },
+  );
 }

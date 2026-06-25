@@ -11,7 +11,12 @@ import {
   buildMemoryContext,
   buildKnowledgeContext,
 } from "@/lib/memory/context";
-import { selectAndRunTool } from "@/lib/tools/tool-calling";
+import {
+  selectAndRunTool,
+  type ToolExecution,
+} from "@/lib/tools/tool-calling";
+import { shouldCheckTools } from "@/lib/tools/should-check-tools";
+import { wrapToolOutput } from "@/lib/tools/output-guard";
 import type { ChatMessage } from "@/lib/ai/types";
 
 export async function POST(req: Request) {
@@ -45,13 +50,14 @@ export async function POST(req: Request) {
     query: message,
   });
 
-  // 3. Single tool-calling step (at most ONE tool executed, 10s timeout).
-  const tool = await selectAndRunTool(session.user.id, message);
+  // 3. Single tool-calling step — fast-path skips detection for small talk.
+  //    At most ONE tool executed; audited; output wrapped in a safety guard.
+  const tool: ToolExecution = shouldCheckTools(message)
+    ? await selectAndRunTool(session.user.id, message, { audit: true })
+    : { toolRequested: null, toolExecuted: false, toolResult: null };
   const toolBlock =
     tool.toolExecuted && tool.toolResult != null
-      ? `Tool result (${tool.toolRequested?.tool}): ${JSON.stringify(
-          tool.toolResult,
-        )}`
+      ? wrapToolOutput(tool.toolRequested?.tool ?? "tool", tool.toolResult)
       : "";
 
   // 4. Assemble the prompt:

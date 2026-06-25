@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { z } from "zod";
 
 // Mock the tool router so the executed tool hangs — deterministically forcing
 // the 10s-timeout branch (tested here with a small timeout).
@@ -7,6 +8,7 @@ vi.mock("@/lib/tools/router", () => ({
     name: "slow",
     description: "",
     schema: { type: "object", properties: {}, required: [] },
+    inputSchema: z.object({}),
     execute: async () => undefined,
   }),
   executeTool: () => new Promise(() => {}), // never resolves
