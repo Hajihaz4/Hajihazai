@@ -35,8 +35,9 @@ export async function POST(req: Request) {
     await addMessage({ conversationId, role: "user", content: message });
   }
 
-  // 2. Build the memory context (active memories only, user-scoped, budgeted).
-  const memory = await buildMemoryContext(session.user.id);
+  // 2. Build the memory context via semantic retrieval on the current message
+  //    (falls back to keyword retrieval when semantic returns nothing).
+  const memory = await buildMemoryContext(session.user.id, { query: message });
 
   // 3. Assemble the prompt: Persona → Memory Context → History → User message.
   const history = await listMessages(conversationId);
@@ -83,6 +84,7 @@ export async function POST(req: Request) {
             memories: memory.memories,
             memoryBlock: memory.block,
             memoryCount: memory.count,
+            fallbackUsed: memory.fallbackUsed,
           },
         }
       : {}),
