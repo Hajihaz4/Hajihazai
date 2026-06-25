@@ -1,4 +1,4 @@
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import { db } from "./index";
 import { userMemory } from "./schema";
 
@@ -104,4 +104,91 @@ export async function rejectMemory(userId: string, id: string) {
 export async function existingMemoryContents(userId: string) {
   const rows = await listMemories(userId);
   return new Set(rows.map((m) => m.content.trim().toLowerCase()));
+}
+
+/* ---------------------- Phase 5 Step 5: management ----------------------- */
+
+/** Every memory for the user, all statuses (management view + export). */
+export async function listAllMemories(userId: string) {
+  return db
+    .select()
+    .from(userMemory)
+    .where(eq(userMemory.userId, userId))
+    .orderBy(desc(userMemory.updatedAt));
+}
+
+export interface MemoryStats {
+  active: number;
+  pending: number;
+  deleted: number;
+  total: number;
+}
+
+export async function memoryStats(userId: string): Promise<MemoryStats> {
+  const rows = await db
+    .select({ status: userMemory.status })
+    .from(userMemory)
+    .where(eq(userMemory.userId, userId));
+
+  const stats: MemoryStats = {
+    active: 0,
+    pending: 0,
+    deleted: 0,
+    total: rows.length,
+  };
+  for (const r of rows) {
+    if (r.status === "active") stats.active++;
+    else if (r.status === "pending") stats.pending++;
+    else if (r.status === "deleted") stats.deleted++;
+  }
+  return stats;
+}
+
+/** Bulk approve — only the user's own PENDING rows transition to active. */
+export async function bulkApprove(userId: string, ids: string[]) {
+  if (ids.length === 0) return [];
+  return db
+    .update(userMemory)
+    .set({ status: "active", updatedAt: new Date() })
+    .where(
+      and(
+        eq(userMemory.userId, userId),
+        inArray(userMemory.id, ids),
+        eq(userMemory.status, "pending"),
+      ),
+    )
+    .returning();
+}
+
+/** Bulk reject — only the user's own PENDING rows transition to deleted. */
+export async function bulkReject(userId: string, ids: string[]) {
+  if (ids.length === 0) return [];
+  return db
+    .update(userMemory)
+    .set({ status: "deleted", updatedAt: new Date() })
+    .where(
+      and(
+        eq(userMemory.userId, userId),
+        inArray(userMemory.id, ids),
+        eq(userMemory.status, "pending"),
+      ),
+    )
+    .returning();
+}
+
+/** Bulk hard-delete — only the user's own rows (any status). */
+export async function bulkDelete(userId: string, ids: string[]) {
+  if (ids.length === 0) return [];
+  return db
+    .delete(userMemory)
+    .where(and(eq(userMemory.userId, userId), inArray(userMemory.id, ids)))
+    .returning();
+}
+
+/** Delete EVERY memory for the user (right-to-be-forgotten). */
+export async function forgetAllMemories(userId: string) {
+  return db
+    .delete(userMemory)
+    .where(eq(userMemory.userId, userId))
+    .returning();
 }

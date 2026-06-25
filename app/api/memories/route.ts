@@ -1,13 +1,32 @@
 import { auth } from "@/auth";
-import { createMemory, listMemories } from "@/lib/db/memory-queries";
+import {
+  createMemory,
+  listMemories,
+  listAllMemories,
+  memoryStats,
+} from "@/lib/db/memory-queries";
 
-export async function GET() {
+export async function GET(req: Request) {
   const session = await auth();
   if (!session?.user?.id) {
     return new Response("Unauthorized", { status: 401 });
   }
-  const rows = await listMemories(session.user.id);
-  return Response.json({ memories: rows });
+
+  const status = new URL(req.url).searchParams.get("status") ?? "visible";
+
+  let memories;
+  if (status === "all") {
+    memories = await listAllMemories(session.user.id);
+  } else if (status === "active" || status === "pending" || status === "deleted") {
+    const all = await listAllMemories(session.user.id);
+    memories = all.filter((m) => m.status === status);
+  } else {
+    // default "visible" = active + pending (unchanged behavior)
+    memories = await listMemories(session.user.id);
+  }
+
+  const stats = await memoryStats(session.user.id);
+  return Response.json({ memories, stats });
 }
 
 export async function POST(req: Request) {
