@@ -283,3 +283,33 @@ export const knowledgeContentRelations = relations(
 
 export type KnowledgeContent = typeof knowledgeContent.$inferSelect;
 export type NewKnowledgeContent = typeof knowledgeContent.$inferInsert;
+
+/* ------------------------------------------------------------------ */
+/* Phase 7.2 — Chunking (chunk generation + storage only)              */
+/* ------------------------------------------------------------------ */
+
+export const knowledgeChunk = pgTable(
+  "knowledge_chunk",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    documentId: text("documentId")
+      .notNull()
+      .references(() => knowledgeDocument.id, { onDelete: "cascade" }),
+    chunkIndex: integer("chunkIndex").notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("knowledge_chunk_document_idx").on(t.documentId)],
+);
+
+export const knowledgeChunkRelations = relations(knowledgeChunk, ({ one }) => ({
+  document: one(knowledgeDocument, {
+    fields: [knowledgeChunk.documentId],
+    references: [knowledgeDocument.id],
+  }),
+}));
+
+export type KnowledgeChunk = typeof knowledgeChunk.$inferSelect;
+export type NewKnowledgeChunk = typeof knowledgeChunk.$inferInsert;

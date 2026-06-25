@@ -31,6 +31,13 @@ export default function KnowledgeBase({
   const [loadingContent, setLoadingContent] = useState(false);
   const [savingContent, setSavingContent] = useState(false);
 
+  // Chunk state.
+  const [chunks, setChunks] = useState<
+    { id: string; chunkIndex: number; content: string }[]
+  >([]);
+  const [chunkCount, setChunkCount] = useState<number | null>(null);
+  const [chunkBusy, setChunkBusy] = useState(false);
+
   async function addDocument() {
     const t = title.trim();
     if (!t || saving) return;
@@ -65,6 +72,8 @@ export default function KnowledgeBase({
     setLoadingContent(true);
     setContent("");
     setContentExists(false);
+    setChunks([]);
+    setChunkCount(null);
     try {
       const res = await fetch(`/api/knowledge/${d.id}/content`);
       if (res.ok) {
@@ -89,6 +98,29 @@ export default function KnowledgeBase({
       if (res.ok) setContentExists(true);
     } finally {
       setSavingContent(false);
+    }
+  }
+
+  async function generateChunks() {
+    if (!openDoc || chunkBusy) return;
+    setChunkBusy(true);
+    try {
+      const res = await fetch(`/api/knowledge/${openDoc.id}/chunk`, {
+        method: "POST",
+      });
+      if (res.ok) await viewChunks();
+    } finally {
+      setChunkBusy(false);
+    }
+  }
+
+  async function viewChunks() {
+    if (!openDoc) return;
+    const res = await fetch(`/api/knowledge/${openDoc.id}/chunks`);
+    if (res.ok) {
+      const data = await res.json();
+      setChunks(data.chunks);
+      setChunkCount(data.count);
     }
   }
 
@@ -123,7 +155,7 @@ export default function KnowledgeBase({
             disabled={loadingContent}
             className="w-full resize-y rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
           />
-          <div className="mt-3">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               onClick={saveContent}
               disabled={savingContent || loadingContent}
@@ -131,7 +163,42 @@ export default function KnowledgeBase({
             >
               {savingContent ? "Saving…" : "Save content"}
             </button>
+            <button
+              onClick={generateChunks}
+              disabled={chunkBusy || loadingContent}
+              className="rounded-lg border px-4 py-2 text-sm hover:bg-accent disabled:opacity-40"
+            >
+              {chunkBusy ? "Generating…" : "Generate Chunks"}
+            </button>
+            <button
+              onClick={viewChunks}
+              className="rounded-lg border px-4 py-2 text-sm hover:bg-accent"
+            >
+              View Chunks
+            </button>
           </div>
+
+          {chunkCount !== null ? (
+            <div className="mt-4 border-t pt-4">
+              <p className="mb-2 text-sm font-medium">
+                {chunkCount} chunk{chunkCount === 1 ? "" : "s"}
+              </p>
+              <ul className="space-y-2">
+                {chunks.map((c) => (
+                  <li
+                    key={c.id}
+                    className="rounded-lg bg-muted/40 p-2 text-xs"
+                  >
+                    <span className="text-muted-foreground">
+                      #{c.chunkIndex}
+                    </span>{" "}
+                    {c.content.slice(0, 140)}
+                    {c.content.length > 140 ? "…" : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </div>
       ) : null}
 

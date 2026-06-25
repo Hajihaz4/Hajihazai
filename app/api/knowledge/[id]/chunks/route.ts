@@ -1,0 +1,28 @@
+import { auth } from "@/auth";
+import { listChunks } from "@/lib/db/knowledge-chunk-queries";
+
+/** Return the document's chunk count and ordered chunk list. */
+export async function GET(
+  _req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  const { id } = await params;
+
+  const chunks = await listChunks(session.user.id, id);
+  if (chunks === null) {
+    return new Response("Not found", { status: 404 });
+  }
+
+  return Response.json({
+    count: chunks.length,
+    chunks: chunks.map((c) => ({
+      id: c.id,
+      chunkIndex: c.chunkIndex,
+      content: c.content,
+    })),
+  });
+}
