@@ -19,14 +19,6 @@ export async function listMemories(userId: string) {
     .orderBy(desc(userMemory.updatedAt));
 }
 
-export async function getMemory(userId: string, id: string) {
-  const [row] = await db
-    .select()
-    .from(userMemory)
-    .where(and(eq(userMemory.id, id), eq(userMemory.userId, userId)));
-  return row ?? null;
-}
-
 export async function createMemory(
   userId: string,
   input: { type?: string; content: string; status?: MemoryStatus },

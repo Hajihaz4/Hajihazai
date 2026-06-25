@@ -179,7 +179,8 @@ export const userMemory = pgTable(
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
   },
-  (t) => [index("user_memory_user_idx").on(t.userId)],
+  // Composite index: retrieval/management filter by (userId, status).
+  (t) => [index("user_memory_user_status_idx").on(t.userId, t.status)],
 );
 
 export const userMemoryRelations = relations(userMemory, ({ one }) => ({

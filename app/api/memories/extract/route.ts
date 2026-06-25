@@ -1,6 +1,11 @@
 import { auth } from "@/auth";
 import { listConversations } from "@/lib/db/queries";
 import { extractMemories } from "@/lib/memory/extract";
+import { rateLimit } from "@/lib/ratelimit";
+
+// Extraction calls an LLM — cap it per user to limit cost/abuse.
+const EXTRACT_LIMIT = 5;
+const EXTRACT_WINDOW_MS = 60_000;
 
 /**
  * Manual extraction trigger.
@@ -12,6 +17,20 @@ export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user?.id) {
     return new Response("Unauthorized", { status: 401 });
+  }
+
+  const limit = rateLimit(
+    `extract:${session.user.id}`,
+    EXTRACT_LIMIT,
+    EXTRACT_WINDOW_MS,
+  );
+  if (!limit.ok) {
+    return new Response("Too many extraction requests. Please wait.", {
+      status: 429,
+      headers: {
+        "Retry-After": String(Math.ceil((limit.retryAfterMs ?? 1000) / 1000)),
+      },
+    });
   }
 
   const body = await req.json().catch(() => null);

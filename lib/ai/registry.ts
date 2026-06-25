@@ -44,7 +44,3 @@ export const MODEL_REGISTRY: ModelEntry[] = [
 export function listEnabledModels(): ModelEntry[] {
   return MODEL_REGISTRY.filter((m) => m.enabled);
 }
-
-export function getModel(modelId: string): ModelEntry | null {
-  return MODEL_REGISTRY.find((m) => m.modelId === modelId) ?? null;
-}
