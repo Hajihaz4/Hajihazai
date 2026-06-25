@@ -152,3 +152,34 @@ export type Conversation = typeof conversations.$inferSelect;
 export type NewConversation = typeof conversations.$inferInsert;
 export type Message = typeof messages.$inferSelect;
 export type NewMessage = typeof messages.$inferInsert;
+
+/* ------------------------------------------------------------------ */
+/* Phase 5 — Memory foundation (CRUD only; no embeddings/retrieval)    */
+/* ------------------------------------------------------------------ */
+
+export const userMemory = pgTable(
+  "user_memory",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    type: text("type").notNull().default("note"),
+    content: text("content").notNull(),
+    createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("user_memory_user_idx").on(t.userId)],
+);
+
+export const userMemoryRelations = relations(userMemory, ({ one }) => ({
+  user: one(users, {
+    fields: [userMemory.userId],
+    references: [users.id],
+  }),
+}));
+
+export type UserMemory = typeof userMemory.$inferSelect;
+export type NewUserMemory = typeof userMemory.$inferInsert;
