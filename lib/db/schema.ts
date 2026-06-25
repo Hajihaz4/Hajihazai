@@ -299,9 +299,18 @@ export const knowledgeChunk = pgTable(
       .references(() => knowledgeDocument.id, { onDelete: "cascade" }),
     chunkIndex: integer("chunkIndex").notNull(),
     content: text("content").notNull(),
+    // Phase 7.3: pgvector embedding (nullable until embedded). 768 = canonical.
+    embedding: vector("embedding", { dimensions: 768 }),
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
   },
-  (t) => [index("knowledge_chunk_document_idx").on(t.documentId)],
+  (t) => [
+    index("knowledge_chunk_document_idx").on(t.documentId),
+    // HNSW index for cosine similarity (storage only; no search this phase).
+    index("knowledge_chunk_embedding_idx").using(
+      "hnsw",
+      t.embedding.op("vector_cosine_ops"),
+    ),
+  ],
 );
 
 export const knowledgeChunkRelations = relations(knowledgeChunk, ({ one }) => ({

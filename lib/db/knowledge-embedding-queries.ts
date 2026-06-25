@@ -1,0 +1,70 @@
+import { and, eq, isNotNull } from "drizzle-orm";
+import { db } from "./index";
+import { knowledgeChunk, knowledgeDocument } from "./schema";
+
+/**
+ * Phase 7.3 — Chunk embedding storage. Ownership via the parent document.
+ * Storage only — no retrieval / similarity search.
+ */
+
+async function ownedDocument(userId: string, documentId: string) {
+  const [doc] = await db
+    .select({ id: knowledgeDocument.id })
+    .from(knowledgeDocument)
+    .where(
+      and(
+        eq(knowledgeDocument.id, documentId),
+        eq(knowledgeDocument.userId, userId),
+      ),
+    );
+  return doc ?? null;
+}
+
+/** Store one chunk's embedding (scoped to a document the user owns). */
+export async function storeChunkEmbedding(
+  userId: string,
+  documentId: string,
+  chunkId: string,
+  embedding: number[],
+) {
+  if (!(await ownedDocument(userId, documentId))) return null;
+  const [row] = await db
+    .update(knowledgeChunk)
+    .set({ embedding })
+    .where(
+      and(
+        eq(knowledgeChunk.id, chunkId),
+        eq(knowledgeChunk.documentId, documentId),
+      ),
+    )
+    .returning({ id: knowledgeChunk.id });
+  return row ?? null;
+}
+
+/** Counts of total vs embedded chunks for a document (user-scoped). */
+export async function getChunkEmbeddingStatus(
+  userId: string,
+  documentId: string,
+) {
+  if (!(await ownedDocument(userId, documentId))) return null;
+
+  const rows = await db
+    .select({ embedding: knowledgeChunk.embedding })
+    .from(knowledgeChunk)
+    .where(eq(knowledgeChunk.documentId, documentId));
+
+  const total = rows.length;
+  const embedded = rows.filter(
+    (r) => Array.isArray(r.embedding) && r.embedding.length > 0,
+  ).length;
+  return { total, embedded };
+}
+
+/** Chunks belonging to a document that the user owns (for embedding). */
+export async function listOwnedChunks(userId: string, documentId: string) {
+  if (!(await ownedDocument(userId, documentId))) return null;
+  return db
+    .select({ id: knowledgeChunk.id, content: knowledgeChunk.content })
+    .from(knowledgeChunk)
+    .where(eq(knowledgeChunk.documentId, documentId));
+}

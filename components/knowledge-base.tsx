@@ -38,6 +38,14 @@ export default function KnowledgeBase({
   const [chunkCount, setChunkCount] = useState<number | null>(null);
   const [chunkBusy, setChunkBusy] = useState(false);
 
+  // Embedding state.
+  const [embedStatus, setEmbedStatus] = useState<{
+    total: number;
+    embedded: number;
+    dimensions: number;
+  } | null>(null);
+  const [embedBusy, setEmbedBusy] = useState(false);
+
   async function addDocument() {
     const t = title.trim();
     if (!t || saving) return;
@@ -74,6 +82,7 @@ export default function KnowledgeBase({
     setContentExists(false);
     setChunks([]);
     setChunkCount(null);
+    setEmbedStatus(null);
     try {
       const res = await fetch(`/api/knowledge/${d.id}/content`);
       if (res.ok) {
@@ -121,6 +130,19 @@ export default function KnowledgeBase({
       const data = await res.json();
       setChunks(data.chunks);
       setChunkCount(data.count);
+    }
+  }
+
+  async function embedChunks() {
+    if (!openDoc || embedBusy) return;
+    setEmbedBusy(true);
+    try {
+      const res = await fetch(`/api/knowledge/${openDoc.id}/embed`, {
+        method: "POST",
+      });
+      if (res.ok) setEmbedStatus(await res.json());
+    } finally {
+      setEmbedBusy(false);
     }
   }
 
@@ -176,7 +198,21 @@ export default function KnowledgeBase({
             >
               View Chunks
             </button>
+            <button
+              onClick={embedChunks}
+              disabled={embedBusy || loadingContent}
+              className="rounded-lg border px-4 py-2 text-sm hover:bg-accent disabled:opacity-40"
+            >
+              {embedBusy ? "Embedding…" : "Embed Chunks"}
+            </button>
           </div>
+
+          {embedStatus ? (
+            <p className="mt-3 rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
+              Embedded {embedStatus.embedded}/{embedStatus.total} chunks · dim{" "}
+              {embedStatus.dimensions}
+            </p>
+          ) : null}
 
           {chunkCount !== null ? (
             <div className="mt-4 border-t pt-4">
