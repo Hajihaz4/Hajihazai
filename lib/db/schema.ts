@@ -8,6 +8,7 @@ import {
   jsonb,
   primaryKey,
   index,
+  vector,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
@@ -176,11 +177,20 @@ export const userMemory = pgTable(
     content: text("content").notNull(),
     // Phase 5 Step 2: extracted memories land as 'pending' until approved.
     status: memoryStatus("status").notNull().default("active"),
+    // Phase 6.1: pgvector embedding (nullable until embedded). 768 = canonical.
+    embedding: vector("embedding", { dimensions: 768 }),
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
   },
-  // Composite index: retrieval/management filter by (userId, status).
-  (t) => [index("user_memory_user_status_idx").on(t.userId, t.status)],
+  (t) => [
+    // Composite index: retrieval/management filter by (userId, status).
+    index("user_memory_user_status_idx").on(t.userId, t.status),
+    // HNSW index for vector similarity (cosine).
+    index("user_memory_embedding_idx").using(
+      "hnsw",
+      t.embedding.op("vector_cosine_ops"),
+    ),
+  ],
 );
 
 export const userMemoryRelations = relations(userMemory, ({ one }) => ({

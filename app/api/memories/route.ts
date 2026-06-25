@@ -26,7 +26,9 @@ export async function GET(req: Request) {
   }
 
   const stats = await memoryStats(session.user.id);
-  return Response.json({ memories, stats });
+  // Strip the embedding vector from list responses (kept server-side only).
+  const safe = memories.map(({ embedding, ...rest }) => rest);
+  return Response.json({ memories: safe, stats });
 }
 
 export async function POST(req: Request) {
