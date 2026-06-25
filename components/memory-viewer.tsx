@@ -1,12 +1,23 @@
 "use client";
 
 import { useState } from "react";
-import { Brain, Check, Pencil, Plus, Trash2, X } from "lucide-react";
+import {
+  Brain,
+  Check,
+  Pencil,
+  Plus,
+  Sparkles,
+  ThumbsDown,
+  ThumbsUp,
+  Trash2,
+  X,
+} from "lucide-react";
 
 type Memory = {
   id: string;
   type: string;
   content: string;
+  status: "pending" | "active" | "deleted";
   updatedAt?: string;
 };
 
@@ -19,6 +30,8 @@ export default function MemoryViewer({
   const [type, setType] = useState("note");
   const [content, setContent] = useState("");
   const [saving, setSaving] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editType, setEditType] = useState("");
@@ -42,6 +55,30 @@ export default function MemoryViewer({
       }
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function runExtraction() {
+    if (extracting) return;
+    setExtracting(true);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/memories/extract", { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.created?.length) {
+          setMemories((p) => [...data.created, ...p]);
+        }
+        setNotice(
+          data.count > 0
+            ? `Extracted ${data.count} pending memory${data.count === 1 ? "" : "s"}.`
+            : "No new memories found in your latest conversation.",
+        );
+      } else {
+        setNotice(await res.text());
+      }
+    } finally {
+      setExtracting(false);
     }
   }
 
@@ -71,12 +108,41 @@ export default function MemoryViewer({
     if (res.ok) setMemories((p) => p.filter((m) => m.id !== id));
   }
 
+  async function approve(id: string) {
+    const res = await fetch(`/api/memories/${id}/approve`, { method: "POST" });
+    if (res.ok) {
+      const data = await res.json();
+      setMemories((p) => p.map((m) => (m.id === id ? data.memory : m)));
+    }
+  }
+
+  async function reject(id: string) {
+    const res = await fetch(`/api/memories/${id}/reject`, { method: "POST" });
+    if (res.ok) setMemories((p) => p.filter((m) => m.id !== id));
+  }
+
   return (
     <main className="mx-auto max-w-2xl px-4 py-10">
-      <div className="mb-8 flex items-center gap-2">
-        <Brain className="size-6" />
-        <h1 className="text-2xl font-semibold tracking-tight">Memory</h1>
+      <div className="mb-8 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Brain className="size-6" />
+          <h1 className="text-2xl font-semibold tracking-tight">Memory</h1>
+        </div>
+        <button
+          onClick={runExtraction}
+          disabled={extracting}
+          className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-accent disabled:opacity-40"
+        >
+          <Sparkles className="size-4" />
+          {extracting ? "Extracting…" : "Extract from recent chat"}
+        </button>
       </div>
+
+      {notice ? (
+        <p className="mb-6 rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
+          {notice}
+        </p>
+      ) : null}
 
       {/* Create */}
       <div className="mb-8 rounded-xl border p-4">
@@ -114,7 +180,12 @@ export default function MemoryViewer({
       ) : (
         <ul className="space-y-3">
           {memories.map((m) => (
-            <li key={m.id} className="rounded-xl border p-4">
+            <li
+              key={m.id}
+              className={`rounded-xl border p-4 ${
+                m.status === "pending" ? "border-dashed bg-muted/30" : ""
+              }`}
+            >
               {editingId === m.id ? (
                 <div className="flex flex-col gap-2">
                   <input
@@ -146,26 +217,55 @@ export default function MemoryViewer({
               ) : (
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <span className="inline-block rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                      {m.type}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="inline-block rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                        {m.type}
+                      </span>
+                      {m.status === "pending" ? (
+                        <span className="inline-block rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600">
+                          pending
+                        </span>
+                      ) : null}
+                    </div>
                     <p className="mt-2 whitespace-pre-wrap text-sm">{m.content}</p>
                   </div>
+
                   <div className="flex shrink-0 gap-1">
-                    <button
-                      onClick={() => startEdit(m)}
-                      aria-label="Edit memory"
-                      className="rounded-lg p-2 text-muted-foreground hover:bg-accent"
-                    >
-                      <Pencil className="size-4" />
-                    </button>
-                    <button
-                      onClick={() => removeMemory(m.id)}
-                      aria-label="Delete memory"
-                      className="rounded-lg p-2 text-muted-foreground hover:text-destructive"
-                    >
-                      <Trash2 className="size-4" />
-                    </button>
+                    {m.status === "pending" ? (
+                      <>
+                        <button
+                          onClick={() => approve(m.id)}
+                          aria-label="Approve memory"
+                          className="rounded-lg p-2 text-muted-foreground hover:text-green-600"
+                        >
+                          <ThumbsUp className="size-4" />
+                        </button>
+                        <button
+                          onClick={() => reject(m.id)}
+                          aria-label="Reject memory"
+                          className="rounded-lg p-2 text-muted-foreground hover:text-destructive"
+                        >
+                          <ThumbsDown className="size-4" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => startEdit(m)}
+                          aria-label="Edit memory"
+                          className="rounded-lg p-2 text-muted-foreground hover:bg-accent"
+                        >
+                          <Pencil className="size-4" />
+                        </button>
+                        <button
+                          onClick={() => removeMemory(m.id)}
+                          aria-label="Delete memory"
+                          className="rounded-lg p-2 text-muted-foreground hover:text-destructive"
+                        >
+                          <Trash2 className="size-4" />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               )}

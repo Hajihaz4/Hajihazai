@@ -1,6 +1,8 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import { db } from "./index";
 import { userMemory } from "./schema";
+
+type MemoryStatus = "pending" | "active" | "deleted";
 
 /**
  * Phase 5 — Memory data layer.
@@ -8,11 +10,12 @@ import { userMemory } from "./schema";
  * memories (ownership enforced at the query level, not just the route level).
  */
 
+/** Viewer list — everything except soft-deleted (rejected) memories. */
 export async function listMemories(userId: string) {
   return db
     .select()
     .from(userMemory)
-    .where(eq(userMemory.userId, userId))
+    .where(and(eq(userMemory.userId, userId), ne(userMemory.status, "deleted")))
     .orderBy(desc(userMemory.updatedAt));
 }
 
@@ -26,7 +29,7 @@ export async function getMemory(userId: string, id: string) {
 
 export async function createMemory(
   userId: string,
-  input: { type?: string; content: string },
+  input: { type?: string; content: string; status?: MemoryStatus },
 ) {
   const [row] = await db
     .insert(userMemory)
@@ -34,6 +37,7 @@ export async function createMemory(
       userId,
       content: input.content,
       ...(input.type ? { type: input.type } : {}),
+      ...(input.status ? { status: input.status } : {}),
     })
     .returning();
   return row;
@@ -62,4 +66,42 @@ export async function deleteMemory(userId: string, id: string) {
     .where(and(eq(userMemory.id, id), eq(userMemory.userId, userId)))
     .returning();
   return row ?? null;
+}
+
+/** Approve a pending memory → active. Only acts on the user's own pending rows. */
+export async function approveMemory(userId: string, id: string) {
+  const [row] = await db
+    .update(userMemory)
+    .set({ status: "active", updatedAt: new Date() })
+    .where(
+      and(
+        eq(userMemory.id, id),
+        eq(userMemory.userId, userId),
+        eq(userMemory.status, "pending"),
+      ),
+    )
+    .returning();
+  return row ?? null;
+}
+
+/** Reject a pending memory → soft-deleted. Only acts on the user's own pending rows. */
+export async function rejectMemory(userId: string, id: string) {
+  const [row] = await db
+    .update(userMemory)
+    .set({ status: "deleted", updatedAt: new Date() })
+    .where(
+      and(
+        eq(userMemory.id, id),
+        eq(userMemory.userId, userId),
+        eq(userMemory.status, "pending"),
+      ),
+    )
+    .returning();
+  return row ?? null;
+}
+
+/** Content keys of all non-deleted memories (used to dedupe extraction). */
+export async function existingMemoryContents(userId: string) {
+  const rows = await listMemories(userId);
+  return new Set(rows.map((m) => m.content.trim().toLowerCase()));
 }

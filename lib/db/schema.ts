@@ -157,6 +157,12 @@ export type NewMessage = typeof messages.$inferInsert;
 /* Phase 5 — Memory foundation (CRUD only; no embeddings/retrieval)    */
 /* ------------------------------------------------------------------ */
 
+export const memoryStatus = pgEnum("memory_status", [
+  "pending",
+  "active",
+  "deleted",
+]);
+
 export const userMemory = pgTable(
   "user_memory",
   {
@@ -168,6 +174,8 @@ export const userMemory = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     type: text("type").notNull().default("note"),
     content: text("content").notNull(),
+    // Phase 5 Step 2: extracted memories land as 'pending' until approved.
+    status: memoryStatus("status").notNull().default("active"),
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
   },

@@ -18,6 +18,7 @@ export default async function MemoryPage() {
     id: m.id,
     type: m.type,
     content: m.content,
+    status: m.status,
     updatedAt: m.updatedAt.toISOString(),
   }));
 
