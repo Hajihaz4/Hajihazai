@@ -5,10 +5,18 @@ import { LogOut } from "lucide-react";
 import Sidebar from "./sidebar";
 import Chat from "./chat";
 import { signOutAction } from "@/app/actions";
+import { listEnabledModels } from "@/lib/ai/registry";
 
 type Conv = { id: string; title: string };
-type Msg = { id: string; role: "user" | "assistant" | "system"; content: string };
+type Msg = {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  modelId?: string | null;
+};
 type User = { name?: string | null; email?: string | null; image?: string | null };
+
+const MODELS = listEnabledModels();
 
 export default function ChatApp({
   user,
@@ -25,6 +33,7 @@ export default function ChatApp({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [modelId, setModelId] = useState<string>(MODELS[0]?.modelId ?? "");
 
   // Load the most recent conversation automatically on first render.
   useEffect(() => {
@@ -86,13 +95,18 @@ export default function ChatApp({
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId: convId, message: text }),
+        body: JSON.stringify({ conversationId: convId, message: text, modelId }),
       });
       const data = await res.json();
 
       setMessages((p) => [
         ...p,
-        { id: crypto.randomUUID(), role: "assistant", content: data.response ?? "" },
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: data.response ?? "",
+          modelId: data.modelId,
+        },
       ]);
 
       // Reflect the auto-generated title in the sidebar.
@@ -139,11 +153,27 @@ export default function ChatApp({
               </div>
             </div>
           </div>
-          <form action={signOutAction}>
-            <button className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm hover:bg-accent">
-              <LogOut className="size-4" /> Sign out
-            </button>
-          </form>
+
+          <div className="flex items-center gap-2">
+            <select
+              value={modelId}
+              onChange={(e) => setModelId(e.target.value)}
+              aria-label="Select model"
+              className="rounded-lg border bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+            >
+              {MODELS.map((m) => (
+                <option key={m.modelId} value={m.modelId}>
+                  {m.displayName}
+                </option>
+              ))}
+            </select>
+
+            <form action={signOutAction}>
+              <button className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm hover:bg-accent">
+                <LogOut className="size-4" /> Sign out
+              </button>
+            </form>
+          </div>
         </header>
 
         <Chat

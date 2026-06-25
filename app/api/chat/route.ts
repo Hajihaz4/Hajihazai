@@ -5,9 +5,9 @@ import {
   listMessages,
   setConversationTitle,
 } from "@/lib/db/queries";
-import { HAJI_MODEL, HAJI_PERSONA } from "@/lib/ai/persona";
-
-const OLLAMA_BASE = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434/api";
+import { HAJI_PERSONA } from "@/lib/ai/persona";
+import { routeChat } from "@/lib/ai/router";
+import type { ChatMessage } from "@/lib/ai/types";
 
 export async function POST(req: Request) {
   const session = await auth();
@@ -15,7 +15,7 @@ export async function POST(req: Request) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const { conversationId, message } = await req.json();
+  const { conversationId, message, modelId } = await req.json();
   if (!conversationId || typeof message !== "string" || !message.trim()) {
     return new Response("Bad request", { status: 400 });
   }
@@ -29,44 +29,37 @@ export async function POST(req: Request) {
   // 1. Persist the user's message immediately.
   await addMessage({ conversationId, role: "user", content: message });
 
-  // 2. Build context (Haji persona + recent history) and call the model.
+  // 2. Build context (Haji persona + recent history).
   const history = await listMessages(conversationId);
-  const ollamaMessages = [
+  const chatMessages: ChatMessage[] = [
     { role: "system", content: HAJI_PERSONA.system },
     ...history.slice(-20).map((m) => ({ role: m.role, content: m.content })),
   ];
 
-  let answer = "";
-  try {
-    const res = await fetch(`${OLLAMA_BASE}/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: HAJI_MODEL,
-        messages: ollamaMessages,
-        stream: false,
-      }),
-    });
-    const data = await res.json();
-    answer = data?.message?.content ?? "";
-  } catch {
-    answer = "⚠️ HajiHaz could not reach the local model (Ollama).";
-  }
+  // 3. Route through the AI infrastructure layer (with fallback).
+  const result = await routeChat(chatMessages, {
+    preferredModelId: typeof modelId === "string" ? modelId : undefined,
+  });
 
-  // 3. Persist the assistant's reply.
+  // 4. Persist the assistant reply WITH the model that produced it.
   await addMessage({
     conversationId,
     role: "assistant",
-    content: answer,
-    modelId: HAJI_MODEL,
+    content: result.text,
+    modelId: result.modelId,
   });
 
-  // 4. Auto-title the conversation from the first user message.
+  // 5. Auto-title the conversation from the first user message.
   let title = convo.title;
   if (convo.title === "New chat") {
     title = message.trim().slice(0, 60);
     await setConversationTitle(conversationId, title);
   }
 
-  return Response.json({ conversationId, response: answer, title });
+  return Response.json({
+    conversationId,
+    response: result.text,
+    modelId: result.modelId,
+    title,
+  });
 }

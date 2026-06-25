@@ -2,8 +2,19 @@
 
 import { useEffect, useRef } from "react";
 import { Send } from "lucide-react";
+import { listEnabledModels } from "@/lib/ai/registry";
 
-type Msg = { id: string; role: "user" | "assistant" | "system"; content: string };
+type Msg = {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  modelId?: string | null;
+};
+
+// modelId → human label for per-message provenance.
+const MODEL_LABELS: Record<string, string> = Object.fromEntries(
+  listEnabledModels().map((m) => [m.modelId, m.displayName]),
+);
 
 export default function Chat({
   messages,
@@ -50,14 +61,21 @@ export default function Chat({
                     m.role === "user" ? "justify-end" : "justify-start"
                   }`}
                 >
-                  <div
-                    className={`max-w-[80%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm ${
-                      m.role === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted"
-                    }`}
-                  >
-                    {m.content}
+                  <div className="max-w-[80%]">
+                    <div
+                      className={`whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm ${
+                        m.role === "user"
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted"
+                      }`}
+                    >
+                      {m.content}
+                    </div>
+                    {m.role === "assistant" && m.modelId && m.modelId !== "none" ? (
+                      <div className="mt-1 px-1 text-xs text-muted-foreground">
+                        {MODEL_LABELS[m.modelId] ?? m.modelId}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ))}

@@ -23,6 +23,7 @@ export async function GET(
       id: m.id,
       role: m.role,
       content: m.content,
+      modelId: m.modelId,
     })),
   });
 }

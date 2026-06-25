@@ -1,0 +1,32 @@
+import type { ChatMessage, Provider } from "../types";
+
+const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
+
+export const openrouterProvider: Provider = {
+  name: "openrouter",
+
+  isAvailable() {
+    return Boolean(process.env.OPENROUTER_API_KEY);
+  },
+
+  async generate(model, messages: ChatMessage[]) {
+    const key = process.env.OPENROUTER_API_KEY;
+    if (!key) throw new Error("OpenRouter: OPENROUTER_API_KEY missing");
+
+    const res = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+        "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
+        "X-Title": "HajiHaz AI",
+      },
+      // OpenRouter is OpenAI-compatible — roles map 1:1.
+      body: JSON.stringify({ model, messages, stream: false }),
+    });
+    if (!res.ok) throw new Error(`OpenRouter error ${res.status}`);
+
+    const data = await res.json();
+    return data?.choices?.[0]?.message?.content ?? "";
+  },
+};
