@@ -11,6 +11,11 @@ export const memorySearchTool: Tool = {
   name: "memory_search",
   description:
     "Search the user's long-term memories semantically. Input: { query: string }.",
+  schema: {
+    type: "object",
+    properties: { query: { type: "string" } },
+    required: ["query"],
+  },
   async execute(userId, input) {
     const query = (input as { query?: unknown })?.query;
     if (typeof query !== "string" || !query.trim()) {

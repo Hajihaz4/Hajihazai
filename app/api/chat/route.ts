@@ -11,6 +11,7 @@ import {
   buildMemoryContext,
   buildKnowledgeContext,
 } from "@/lib/memory/context";
+import { selectAndRunTool } from "@/lib/tools/tool-calling";
 import type { ChatMessage } from "@/lib/ai/types";
 
 export async function POST(req: Request) {
@@ -44,8 +45,17 @@ export async function POST(req: Request) {
     query: message,
   });
 
-  // 3. Assemble the prompt:
-  //    Persona → Memory Context → Knowledge Context → History → User message.
+  // 3. Single tool-calling step (at most ONE tool executed, 10s timeout).
+  const tool = await selectAndRunTool(session.user.id, message);
+  const toolBlock =
+    tool.toolExecuted && tool.toolResult != null
+      ? `Tool result (${tool.toolRequested?.tool}): ${JSON.stringify(
+          tool.toolResult,
+        )}`
+      : "";
+
+  // 4. Assemble the prompt:
+  //    Persona → Memory → Knowledge → Tool result → History → User message.
   const history = await listMessages(conversationId);
   const historyMessages: ChatMessage[] = history
     .slice(-20)
@@ -59,6 +69,7 @@ export async function POST(req: Request) {
     ...(knowledge.block
       ? [{ role: "system" as const, content: knowledge.block }]
       : []),
+    ...(toolBlock ? [{ role: "system" as const, content: toolBlock }] : []),
     ...historyMessages,
   ];
 
@@ -96,6 +107,9 @@ export async function POST(req: Request) {
             knowledgeCount: knowledge.count,
             memoryBlock: memory.block,
             knowledgeBlock: knowledge.block,
+            toolRequested: tool.toolRequested,
+            toolExecuted: tool.toolExecuted,
+            toolResult: tool.toolResult,
           },
         }
       : {}),

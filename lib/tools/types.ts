@@ -1,8 +1,15 @@
 /** Tool execution contracts (Phase 8.0). Deterministic tools only. */
 
+export interface ToolSchema {
+  type: "object";
+  properties: Record<string, unknown>;
+  required?: string[];
+}
+
 export interface Tool {
   name: string;
   description: string;
+  schema: ToolSchema;
   execute(userId: string, input: unknown): Promise<unknown>;
 }
 

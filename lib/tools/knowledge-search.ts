@@ -12,6 +12,11 @@ export const knowledgeSearchTool: Tool = {
   name: "knowledge_search",
   description:
     "Search the user's knowledge base semantically. Input: { query: string }.",
+  schema: {
+    type: "object",
+    properties: { query: { type: "string" } },
+    required: ["query"],
+  },
   async execute(userId, input) {
     const query = (input as { query?: unknown })?.query;
     if (typeof query !== "string" || !query.trim()) {

@@ -7,6 +7,11 @@ import type { Tool } from "./types";
 export const currentTimeTool: Tool = {
   name: "current_time",
   description: "Return the current server time. Input: {} (none required).",
+  schema: {
+    type: "object",
+    properties: {},
+    required: [],
+  },
   async execute() {
     const now = new Date();
     const timezone =
