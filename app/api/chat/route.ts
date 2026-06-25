@@ -7,7 +7,10 @@ import {
 } from "@/lib/db/queries";
 import { HAJI_PERSONA } from "@/lib/ai/persona";
 import { routeChat } from "@/lib/ai/router";
-import { buildMemoryContext } from "@/lib/memory/context";
+import {
+  buildMemoryContext,
+  buildKnowledgeContext,
+} from "@/lib/memory/context";
 import type { ChatMessage } from "@/lib/ai/types";
 
 export async function POST(req: Request) {
@@ -35,11 +38,14 @@ export async function POST(req: Request) {
     await addMessage({ conversationId, role: "user", content: message });
   }
 
-  // 2. Build the memory context via semantic retrieval on the current message
-  //    (falls back to keyword retrieval when semantic returns nothing).
+  // 2. Build memory + knowledge context via semantic retrieval on the message.
   const memory = await buildMemoryContext(session.user.id, { query: message });
+  const knowledge = await buildKnowledgeContext(session.user.id, {
+    query: message,
+  });
 
-  // 3. Assemble the prompt: Persona → Memory Context → History → User message.
+  // 3. Assemble the prompt:
+  //    Persona → Memory Context → Knowledge Context → History → User message.
   const history = await listMessages(conversationId);
   const historyMessages: ChatMessage[] = history
     .slice(-20)
@@ -50,6 +56,9 @@ export async function POST(req: Request) {
   const chatMessages: ChatMessage[] = [
     { role: "system", content: HAJI_PERSONA.system },
     ...(memory.block ? [{ role: "system" as const, content: memory.block }] : []),
+    ...(knowledge.block
+      ? [{ role: "system" as const, content: knowledge.block }]
+      : []),
     ...historyMessages,
   ];
 
@@ -82,9 +91,11 @@ export async function POST(req: Request) {
       ? {
           debug: {
             memories: memory.memories,
-            memoryBlock: memory.block,
             memoryCount: memory.count,
-            fallbackUsed: memory.fallbackUsed,
+            knowledge: knowledge.chunks,
+            knowledgeCount: knowledge.count,
+            memoryBlock: memory.block,
+            knowledgeBlock: knowledge.block,
           },
         }
       : {}),
