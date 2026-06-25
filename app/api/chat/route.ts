@@ -7,6 +7,7 @@ import {
 } from "@/lib/db/queries";
 import { HAJI_PERSONA } from "@/lib/ai/persona";
 import { routeChat } from "@/lib/ai/router";
+import { buildMemoryContext } from "@/lib/memory/context";
 import type { ChatMessage } from "@/lib/ai/types";
 
 export async function POST(req: Request) {
@@ -14,6 +15,9 @@ export async function POST(req: Request) {
   if (!session?.user?.id) {
     return new Response("Unauthorized", { status: 401 });
   }
+
+  const debug =
+    ["1", "true"].includes(new URL(req.url).searchParams.get("debug") ?? "");
 
   const { conversationId, message, modelId } = await req.json();
   if (!conversationId || typeof message !== "string" || !message.trim()) {
@@ -26,34 +30,46 @@ export async function POST(req: Request) {
     return new Response("Not found", { status: 404 });
   }
 
-  // 1. Persist the user's message immediately.
-  await addMessage({ conversationId, role: "user", content: message });
+  // 1. Persist the user's message (skipped in debug to avoid side effects).
+  if (!debug) {
+    await addMessage({ conversationId, role: "user", content: message });
+  }
 
-  // 2. Build context (Haji persona + recent history).
+  // 2. Build the memory context (active memories only, user-scoped, budgeted).
+  const memory = await buildMemoryContext(session.user.id);
+
+  // 3. Assemble the prompt: Persona → Memory Context → History → User message.
   const history = await listMessages(conversationId);
+  const historyMessages: ChatMessage[] = history
+    .slice(-20)
+    .map((m) => ({ role: m.role, content: m.content }));
+  // In debug we did not persist, so append the current message explicitly.
+  if (debug) historyMessages.push({ role: "user", content: message.trim() });
+
   const chatMessages: ChatMessage[] = [
     { role: "system", content: HAJI_PERSONA.system },
-    ...history.slice(-20).map((m) => ({ role: m.role, content: m.content })),
+    ...(memory.block ? [{ role: "system" as const, content: memory.block }] : []),
+    ...historyMessages,
   ];
 
-  // 3. Route through the AI infrastructure layer (with fallback).
+  // 4. Route through the AI infrastructure layer (with fallback).
   const result = await routeChat(chatMessages, {
     preferredModelId: typeof modelId === "string" ? modelId : undefined,
   });
 
-  // 4. Persist the assistant reply WITH the model that produced it.
-  await addMessage({
-    conversationId,
-    role: "assistant",
-    content: result.text,
-    modelId: result.modelId,
-  });
-
-  // 5. Auto-title the conversation from the first user message.
+  // 5. Persist the assistant reply + auto-title (skipped in debug).
   let title = convo.title;
-  if (convo.title === "New chat") {
-    title = message.trim().slice(0, 60);
-    await setConversationTitle(conversationId, title);
+  if (!debug) {
+    await addMessage({
+      conversationId,
+      role: "assistant",
+      content: result.text,
+      modelId: result.modelId,
+    });
+    if (convo.title === "New chat") {
+      title = message.trim().slice(0, 60);
+      await setConversationTitle(conversationId, title);
+    }
   }
 
   return Response.json({
@@ -61,5 +77,14 @@ export async function POST(req: Request) {
     response: result.text,
     modelId: result.modelId,
     title,
+    ...(debug
+      ? {
+          debug: {
+            memories: memory.memories,
+            memoryBlock: memory.block,
+            memoryCount: memory.count,
+          },
+        }
+      : {}),
   });
 }
