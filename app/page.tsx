@@ -1,29 +1,45 @@
+import { auth } from "@/auth";
 import { Sparkles } from "lucide-react";
 
-export default function Home() {
+export default async function Home() {
+  const session = await auth();
+
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center px-6 text-center">
-      <div className="flex items-center gap-2 rounded-full border border-border px-4 py-1.5 text-sm text-muted-foreground">
+      <div className="flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm">
         <Sparkles className="size-4" />
         <span>MVP — Phase 1</span>
       </div>
 
-      <h1 className="mt-8 text-5xl font-semibold tracking-tight sm:text-6xl">
+      <h1 className="mt-8 text-5xl font-semibold">
         HajiHaz AI
       </h1>
 
-      <p className="mt-4 max-w-xl text-balance text-lg text-muted-foreground">
-        A next-generation AI assistant powered by memory, retrieval, and
-        multi-model intelligence.
-      </p>
+      {session ? (
+        <>
+          <img
+            src={session.user?.image ?? ""}
+            alt="Profile"
+            className="mt-6 h-20 w-20 rounded-full"
+          />
 
-      <div className="mt-10 inline-flex items-center rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground">
-        Chat is coming online soon
-      </div>
+          <h2 className="mt-4 text-xl font-medium">
+            {session.user?.name}
+          </h2>
 
-      <footer className="mt-16 text-xs text-muted-foreground">
-        hajihazai.com
-      </footer>
+          <p className="text-gray-500">
+            {session.user?.email}
+          </p>
+
+          <div className="mt-8 rounded-lg bg-green-600 px-5 py-2 text-white">
+            Logged in successfully
+          </div>
+        </>
+      ) : (
+        <div className="mt-8 rounded-lg bg-red-600 px-5 py-2 text-white">
+          Not logged in
+        </div>
+      )}
     </main>
   );
 }
