@@ -202,3 +202,51 @@ export const userMemoryRelations = relations(userMemory, ({ one }) => ({
 
 export type UserMemory = typeof userMemory.$inferSelect;
 export type NewUserMemory = typeof userMemory.$inferInsert;
+
+/* ------------------------------------------------------------------ */
+/* Phase 7.0 — Knowledge Base foundation (document registry only)      */
+/* ------------------------------------------------------------------ */
+
+export const knowledgeSourceType = pgEnum("knowledge_source_type", [
+  "pdf",
+  "text",
+  "website",
+  "note",
+]);
+
+export const knowledgeStatus = pgEnum("knowledge_status", [
+  "processing",
+  "active",
+  "failed",
+]);
+
+export const knowledgeDocument = pgTable(
+  "knowledge_document",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    sourceType: knowledgeSourceType("sourceType").notNull().default("note"),
+    status: knowledgeStatus("status").notNull().default("active"),
+    createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("knowledge_document_user_idx").on(t.userId)],
+);
+
+export const knowledgeDocumentRelations = relations(
+  knowledgeDocument,
+  ({ one }) => ({
+    user: one(users, {
+      fields: [knowledgeDocument.userId],
+      references: [users.id],
+    }),
+  }),
+);
+
+export type KnowledgeDocument = typeof knowledgeDocument.$inferSelect;
+export type NewKnowledgeDocument = typeof knowledgeDocument.$inferInsert;

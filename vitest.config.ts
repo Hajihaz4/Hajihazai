@@ -7,6 +7,10 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./vitest.setup.ts"],
     include: ["tests/**/*.test.ts"],
+    // DB + Ollama-backed suites embed multiple memories in setup; give the
+    // hooks/tests room beyond the 5s/10s defaults.
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
   },
   resolve: {
     alias: {
