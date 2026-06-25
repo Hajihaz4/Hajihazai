@@ -1,45 +1,45 @@
+import { Github, Sparkles } from "lucide-react";
 import { auth } from "@/auth";
-import { Sparkles } from "lucide-react";
+import { listConversations } from "@/lib/db/queries";
+import { signInWithGitHub } from "@/app/actions";
+import ChatApp from "@/components/chat-app";
 
 export default async function Home() {
   const session = await auth();
 
-  return (
-    <main className="flex min-h-dvh flex-col items-center justify-center px-6 text-center">
-      <div className="flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm">
-        <Sparkles className="size-4" />
-        <span>MVP — Phase 1</span>
-      </div>
-
-      <h1 className="mt-8 text-5xl font-semibold">
-        HajiHaz AI
-      </h1>
-
-      {session ? (
-        <>
-          <img
-            src={session.user?.image ?? ""}
-            alt="Profile"
-            className="mt-6 h-20 w-20 rounded-full"
-          />
-
-          <h2 className="mt-4 text-xl font-medium">
-            {session.user?.name}
-          </h2>
-
-          <p className="text-gray-500">
-            {session.user?.email}
-          </p>
-
-          <div className="mt-8 rounded-lg bg-green-600 px-5 py-2 text-white">
-            Logged in successfully
-          </div>
-        </>
-      ) : (
-        <div className="mt-8 rounded-lg bg-red-600 px-5 py-2 text-white">
-          Not logged in
+  if (!session?.user?.id) {
+    return (
+      <main className="flex min-h-dvh flex-col items-center justify-center gap-6 px-6 text-center">
+        <div className="flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm text-muted-foreground">
+          <Sparkles className="size-4" /> HajiHaz AI
         </div>
-      )}
-    </main>
+        <h1 className="text-4xl font-semibold tracking-tight">
+          Welcome to HajiHaz AI
+        </h1>
+        <p className="max-w-md text-muted-foreground">
+          Sign in to start chatting. Your conversations are saved and ready
+          whenever you return.
+        </p>
+        <form action={signInWithGitHub}>
+          <button className="flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90">
+            <Github className="size-4" /> Continue with GitHub
+          </button>
+        </form>
+      </main>
+    );
+  }
+
+  const rows = await listConversations(session.user.id);
+  const conversations = rows.map((c) => ({ id: c.id, title: c.title }));
+
+  return (
+    <ChatApp
+      user={{
+        name: session.user.name,
+        email: session.user.email,
+        image: session.user.image,
+      }}
+      initialConversations={conversations}
+    />
   );
 }
