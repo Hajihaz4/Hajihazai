@@ -148,6 +148,12 @@ export default function MemoryViewer({
             Retrieval
           </a>
           <a
+            href="/memory/semantic"
+            className="rounded-lg border px-3 py-2 text-sm text-muted-foreground hover:bg-accent"
+          >
+            Semantic
+          </a>
+          <a
             href="/memory/debug"
             className="rounded-lg border px-3 py-2 text-sm text-muted-foreground hover:bg-accent"
           >
