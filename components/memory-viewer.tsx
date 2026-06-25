@@ -130,6 +130,12 @@ export default function MemoryViewer({
         </div>
         <div className="flex items-center gap-2">
           <a
+            href="/memory/retrieval"
+            className="rounded-lg border px-3 py-2 text-sm text-muted-foreground hover:bg-accent"
+          >
+            Retrieval
+          </a>
+          <a
             href="/memory/debug"
             className="rounded-lg border px-3 py-2 text-sm text-muted-foreground hover:bg-accent"
           >
