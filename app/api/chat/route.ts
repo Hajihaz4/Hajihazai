@@ -64,10 +64,24 @@ export async function POST(req: Request) {
   }
 
   // 2. Build memory + knowledge context via semantic retrieval on the message.
-  const memory = await buildMemoryContext(session.user.id, { query: message });
-  const knowledge = await buildKnowledgeContext(session.user.id, {
-    query: message,
-  });
+  //    These embed the query — if the embedding provider fails (e.g. Gemini
+  //    429 quota with no fallback configured), DEGRADE gracefully to no
+  //    context instead of 500-ing the whole chat turn.
+  let memory: Awaited<ReturnType<typeof buildMemoryContext>>;
+  try {
+    memory = await buildMemoryContext(session.user.id, { query: message });
+  } catch (err) {
+    console.error("memory context failed — degrading to none:", err);
+    memory = { block: "", memories: [], count: 0, fallbackUsed: false };
+  }
+
+  let knowledge: Awaited<ReturnType<typeof buildKnowledgeContext>>;
+  try {
+    knowledge = await buildKnowledgeContext(session.user.id, { query: message });
+  } catch (err) {
+    console.error("knowledge context failed — degrading to none:", err);
+    knowledge = { block: "", chunks: [], count: 0 };
+  }
 
   // 3. Single tool-calling step — fast-path skips detection for small talk.
   //    At most ONE tool executed; audited; output wrapped in a safety guard.
