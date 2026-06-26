@@ -141,7 +141,8 @@ export async function POST(req: Request) {
   return Response.json({
     conversationId,
     response: result.text,
-    modelId: result.modelId,
+    modelId: result.modelId, // the model that actually served the response
+    requestedModelId: typeof modelId === "string" ? modelId : null,
     title,
     ...(debug
       ? {

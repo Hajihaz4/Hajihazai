@@ -9,12 +9,15 @@ type Msg = {
   role: "user" | "assistant" | "system";
   content: string;
   modelId?: string | null;
+  fallbackFrom?: string | null;
 };
 
 // modelId → human label for per-message provenance.
 const MODEL_LABELS: Record<string, string> = Object.fromEntries(
   listEnabledModels().map((m) => [m.modelId, m.displayName]),
 );
+
+const label = (id?: string | null) => (id ? MODEL_LABELS[id] ?? id : "");
 
 export default function Chat({
   messages,
@@ -72,9 +75,15 @@ export default function Chat({
                       {m.content}
                     </div>
                     {m.role === "assistant" && m.modelId && m.modelId !== "none" ? (
-                      <div className="mt-1 px-1 text-xs text-muted-foreground">
-                        {MODEL_LABELS[m.modelId] ?? m.modelId}
-                      </div>
+                      m.fallbackFrom ? (
+                        <div className="mt-1 px-1 text-xs text-amber-600">
+                          ⚠️ {label(m.fallbackFrom)} failed — using {label(m.modelId)}
+                        </div>
+                      ) : (
+                        <div className="mt-1 px-1 text-xs text-muted-foreground">
+                          {label(m.modelId)}
+                        </div>
+                      )
                     ) : null}
                   </div>
                 </div>

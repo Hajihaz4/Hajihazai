@@ -13,6 +13,7 @@ type Msg = {
   role: "user" | "assistant" | "system";
   content: string;
   modelId?: string | null;
+  fallbackFrom?: string | null;
 };
 type User = { name?: string | null; email?: string | null; image?: string | null };
 
@@ -99,6 +100,14 @@ export default function ChatApp({
       });
       const data = await res.json();
 
+      // Detect fallback: the served model differs from the one the user picked.
+      const served: string | undefined = data.modelId;
+      const requested: string | undefined = data.requestedModelId ?? modelId;
+      const fallbackFrom =
+        served && served !== "none" && requested && served !== requested
+          ? requested
+          : null;
+
       setMessages((p) => [
         ...p,
         {
@@ -106,6 +115,7 @@ export default function ChatApp({
           role: "assistant",
           content: data.response ?? "",
           modelId: data.modelId,
+          fallbackFrom,
         },
       ]);
 
