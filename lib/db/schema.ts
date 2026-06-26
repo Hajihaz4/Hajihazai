@@ -8,6 +8,7 @@ import {
   jsonb,
   primaryKey,
   index,
+  uniqueIndex,
   vector,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
@@ -359,3 +360,48 @@ export const toolInvocation = pgTable(
 
 export type ToolInvocation = typeof toolInvocation.$inferSelect;
 export type NewToolInvocation = typeof toolInvocation.$inferInsert;
+
+/* ------------------------------------------------------------------ */
+/* Google profile + onboarding                                         */
+/* ------------------------------------------------------------------ */
+
+export const userProfiles = pgTable(
+  "user_profiles",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    // One profile per Auth.js user.
+    userId: text("user_id")
+      .notNull()
+      .unique()
+      .references(() => users.id, { onDelete: "cascade" }),
+    googleId: text("google_id").unique(), // Google "sub"
+    email: text("email").notNull().unique(),
+    googleName: text("google_name"),
+    profilePicture: text("profile_picture"),
+    // Set during onboarding (null until then). Case-insensitive uniqueness is
+    // enforced by a functional unique index added in the migration.
+    username: text("username"),
+    mobileNumber: text("mobile_number"),
+    countryCode: text("country_code"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+    lastLogin: timestamp("last_login", { mode: "date" }),
+  },
+  (t) => [
+    uniqueIndex("user_profiles_google_id_idx").on(t.googleId),
+    uniqueIndex("user_profiles_email_idx").on(t.email),
+    index("user_profiles_username_idx").on(t.username),
+  ],
+);
+
+export const userProfilesRelations = relations(userProfiles, ({ one }) => ({
+  user: one(users, {
+    fields: [userProfiles.userId],
+    references: [users.id],
+  }),
+}));
+
+export type UserProfile = typeof userProfiles.$inferSelect;
+export type NewUserProfile = typeof userProfiles.$inferInsert;
