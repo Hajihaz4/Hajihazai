@@ -35,23 +35,41 @@ export default async function Home() {
   // Not signed in → clean Google sign-in.
   if (!session?.user?.id) {
     return (
-      <main className="flex min-h-dvh flex-col items-center justify-center gap-6 px-6 text-center">
-        <div className="flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm text-muted-foreground">
-          <Sparkles className="size-4" /> HajiHaz AI
+      <main className="flex min-h-dvh flex-col items-center justify-center px-6 py-10">
+        <div className="flex w-full max-w-sm flex-col items-center gap-6 text-center">
+          {/* Brand */}
+          <div className="flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm text-muted-foreground">
+            <Sparkles className="size-4" /> HajiHaz AI
+          </div>
+
+          {/* Headline + sub-copy: make it clear this is sign-in AND sign-up */}
+          <div className="space-y-2">
+            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+              Welcome to HajiHaz AI
+            </h1>
+            <p className="text-balance text-sm text-muted-foreground sm:text-base">
+              Sign in or create your account with Google.
+            </p>
+          </div>
+
+          {/* Auth card: badge → button → helper */}
+          <div className="flex w-full flex-col items-center gap-3">
+            <span className="inline-flex items-center rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
+              Login &amp; Registration
+            </span>
+
+            <form action={signInWithGoogle} className="w-full">
+              <button className="flex min-h-12 w-full items-center justify-center gap-3 rounded-lg border bg-background px-5 text-sm font-medium shadow-sm hover:bg-accent">
+                <GoogleIcon />
+                Continue with Google
+              </button>
+            </form>
+
+            <p className="text-xs text-muted-foreground">
+              New users will be guided through a quick onboarding process.
+            </p>
+          </div>
         </div>
-        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-          Welcome to HajiHaz AI
-        </h1>
-        <p className="max-w-md text-sm text-muted-foreground sm:text-base">
-          Sign in to start chatting. Your conversations are saved and ready
-          whenever you return.
-        </p>
-        <form action={signInWithGoogle} className="w-full max-w-xs">
-          <button className="flex min-h-11 w-full items-center justify-center gap-3 rounded-lg border bg-background px-5 text-sm font-medium hover:bg-accent">
-            <GoogleIcon />
-            Continue with Google
-          </button>
-        </form>
       </main>
     );
   }
