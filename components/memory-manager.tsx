@@ -96,7 +96,7 @@ export default function MemoryManager({
       </h1>
 
       {/* Statistics */}
-      <div className="mb-6 grid grid-cols-4 gap-3">
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Active" value={stats.active} />
         <Stat label="Pending" value={stats.pending} />
         <Stat label="Deleted" value={stats.deleted} />
@@ -136,7 +136,7 @@ export default function MemoryManager({
       </div>
 
       {/* Bulk action bar */}
-      <div className="mb-4 flex items-center gap-2 text-sm">
+      <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
         <button
           onClick={toggleAllVisible}
           className="rounded-lg border px-3 py-1.5 hover:bg-accent"
@@ -146,7 +146,7 @@ export default function MemoryManager({
             : "Select all"}
         </button>
         <span className="text-muted-foreground">{selected.size} selected</span>
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex flex-wrap gap-2">
           <button
             onClick={() => bulk("approve")}
             disabled={busy || selected.size === 0}

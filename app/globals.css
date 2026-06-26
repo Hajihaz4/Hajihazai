@@ -80,3 +80,29 @@
     color: var(--foreground);
   }
 }
+
+/* ---- Mobile-first base ---- */
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    /* Never allow horizontal scroll / rubber-band sideways on phones. */
+    overflow-x: hidden;
+  }
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+@layer utilities {
+  /* Long words, URLs and code must wrap instead of widening the viewport. */
+  .break-anywhere {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  /* Respect the iOS home-indicator / notch safe areas. */
+  .pb-safe {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+}

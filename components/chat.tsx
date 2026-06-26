@@ -41,9 +41,9 @@ export default function Chat({
   }, [messages, sending]);
 
   return (
-    <div className="flex h-full flex-1 flex-col">
-      <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-3xl px-4 py-6">
+    <div className="flex h-full min-h-0 flex-1 flex-col">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        <div className="mx-auto max-w-3xl px-3 py-5 sm:px-4 sm:py-6">
           {loading ? (
             <p className="py-24 text-center text-sm text-muted-foreground">
               Loading conversation…
@@ -66,7 +66,7 @@ export default function Chat({
                 >
                   <div className="max-w-[80%]">
                     <div
-                      className={`whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm ${
+                      className={`break-anywhere whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm ${
                         m.role === "user"
                           ? "bg-primary text-primary-foreground"
                           : "bg-muted"
@@ -101,7 +101,7 @@ export default function Chat({
         </div>
       </div>
 
-      <div className="border-t p-4">
+      <div className="border-t p-3 pb-safe sm:p-4">
         <div className="mx-auto flex max-w-3xl items-end gap-2">
           <textarea
             value={input}
@@ -114,7 +114,8 @@ export default function Chat({
             }}
             rows={1}
             placeholder="Message HajiHaz AI…"
-            className="flex-1 resize-none rounded-xl border bg-background px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+            // text-base (16px) on mobile prevents iOS auto-zoom on focus.
+            className="max-h-40 min-h-11 flex-1 resize-none rounded-xl border bg-background px-4 py-3 text-base outline-none focus:ring-2 focus:ring-ring sm:text-sm"
           />
           <button
             onClick={onSend}

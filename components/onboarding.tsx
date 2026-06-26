@@ -129,7 +129,7 @@ export default function Onboarding({
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="username"
-              className="w-full rounded-lg border bg-background px-3 py-2 pr-9 text-sm outline-none focus:ring-2 focus:ring-ring"
+              className="w-full rounded-lg border bg-background px-3 py-2.5 pr-9 text-base outline-none focus:ring-2 focus:ring-ring sm:text-sm"
             />
             <span className="absolute right-3 top-1/2 -translate-y-1/2">
               {avail === "checking" ? <Loader2 className="size-4 animate-spin text-muted-foreground" /> : null}
@@ -151,7 +151,7 @@ export default function Onboarding({
           <button
             onClick={() => setStep(2)}
             disabled={!canContinueStep1}
-            className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
+            className="min-h-11 w-full rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
           >
             Continue
           </button>
@@ -166,7 +166,7 @@ export default function Onboarding({
             <select
               value={countryCode}
               onChange={(e) => setCountryCode(e.target.value)}
-              className="rounded-lg border bg-background px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+              className="min-h-11 shrink-0 rounded-lg border bg-background px-2 text-base outline-none focus:ring-2 focus:ring-ring sm:text-sm"
             >
               {COUNTRY_CODES.map((c) => (
                 <option key={c.code} value={c.code}>
@@ -180,7 +180,7 @@ export default function Onboarding({
               onChange={(e) => setMobile(e.target.value)}
               inputMode="numeric"
               placeholder="9876543210"
-              className="flex-1 rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+              className="min-h-11 min-w-0 flex-1 rounded-lg border bg-background px-3 text-base outline-none focus:ring-2 focus:ring-ring sm:text-sm"
             />
           </div>
           <p className="text-xs text-muted-foreground">
@@ -189,14 +189,14 @@ export default function Onboarding({
           <div className="flex gap-2">
             <button
               onClick={() => setStep(1)}
-              className="rounded-lg border px-4 py-2 text-sm hover:bg-accent"
+              className="min-h-11 rounded-lg border px-4 text-sm hover:bg-accent"
             >
               Back
             </button>
             <button
               onClick={() => setStep(3)}
               disabled={!canContinueStep2}
-              className="flex-1 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
+              className="min-h-11 flex-1 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
             >
               Continue
             </button>
@@ -218,14 +218,14 @@ export default function Onboarding({
           <div className="flex gap-2">
             <button
               onClick={() => setStep(2)}
-              className="rounded-lg border px-4 py-2 text-sm hover:bg-accent"
+              className="min-h-11 rounded-lg border px-4 text-sm hover:bg-accent"
             >
               Back
             </button>
             <button
               onClick={submit}
               disabled={submitting}
-              className="flex-1 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
+              className="min-h-11 flex-1 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
             >
               {submitting ? "Completing…" : "Complete Profile"}
             </button>

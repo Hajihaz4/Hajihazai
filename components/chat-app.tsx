@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LogOut } from "lucide-react";
+import { LogOut, Menu, PlusCircle } from "lucide-react";
 import Sidebar from "./sidebar";
 import Chat from "./chat";
 import { signOutAction } from "@/app/actions";
@@ -35,6 +35,8 @@ export default function ChatApp({
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(false);
   const [modelId, setModelId] = useState<string>(MODELS[0]?.modelId ?? "");
+  // Mobile off-canvas sidebar.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Load the most recent conversation automatically on first render.
   useEffect(() => {
@@ -44,6 +46,7 @@ export default function ChatApp({
 
   async function openConversation(id: string) {
     setActiveId(id);
+    setSidebarOpen(false); // close drawer on mobile after selecting
     setLoading(true);
     try {
       const res = await fetch(`/api/conversations/${id}/messages`);
@@ -60,6 +63,7 @@ export default function ChatApp({
     setConversations((p) => [convo, ...p]);
     setActiveId(convo.id);
     setMessages([]);
+    setSidebarOpen(false);
   }
 
   async function removeConversation(id: string) {
@@ -140,36 +144,60 @@ export default function ChatApp({
   }
 
   return (
-    <div className="flex h-dvh">
+    <div className="flex h-dvh overflow-hidden">
       <Sidebar
         conversations={conversations}
         activeId={activeId}
         onSelect={openConversation}
         onNew={newChat}
         onDelete={removeConversation}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
       />
 
-      <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between border-b px-4 py-3">
-          <div className="flex items-center gap-2">
+      {/* min-w-0 lets the chat column shrink below content width on mobile */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex items-center gap-2 border-b px-3 py-2.5 sm:px-4 sm:py-3">
+          {/* Hamburger (mobile only) */}
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Open conversations"
+            className="flex size-10 shrink-0 items-center justify-center rounded-lg hover:bg-accent md:hidden"
+          >
+            <Menu className="size-5" />
+          </button>
+
+          {/* New chat (mobile quick action) */}
+          <button
+            type="button"
+            onClick={newChat}
+            aria-label="New chat"
+            className="flex size-10 shrink-0 items-center justify-center rounded-lg hover:bg-accent md:hidden"
+          >
+            <PlusCircle className="size-5" />
+          </button>
+
+          {/* User identity (hidden on the smallest screens to save room) */}
+          <div className="hidden min-w-0 items-center gap-2 sm:flex">
             {user.image ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={user.image} alt="" className="size-7 rounded-full" />
+              <img src={user.image} alt="" className="size-7 shrink-0 rounded-full" />
             ) : null}
-            <div className="text-sm">
-              <div className="font-medium leading-tight">{user.name}</div>
-              <div className="text-xs leading-tight text-muted-foreground">
+            <div className="min-w-0 text-sm">
+              <div className="truncate font-medium leading-tight">{user.name}</div>
+              <div className="truncate text-xs leading-tight text-muted-foreground">
                 {user.email}
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="ml-auto flex min-w-0 items-center gap-2">
             <select
               value={modelId}
               onChange={(e) => setModelId(e.target.value)}
               aria-label="Select model"
-              className="rounded-lg border bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+              className="min-w-0 max-w-[40vw] truncate rounded-lg border bg-background px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-ring sm:max-w-none sm:px-3 sm:py-1.5"
             >
               {MODELS.map((m) => (
                 <option key={m.modelId} value={m.modelId}>
@@ -179,8 +207,12 @@ export default function ChatApp({
             </select>
 
             <form action={signOutAction}>
-              <button className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm hover:bg-accent">
-                <LogOut className="size-4" /> Sign out
+              <button
+                aria-label="Sign out"
+                className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg border px-2.5 text-sm hover:bg-accent sm:px-3 sm:py-1.5"
+              >
+                <LogOut className="size-4" />
+                <span className="hidden sm:inline">Sign out</span>
               </button>
             </form>
           </div>

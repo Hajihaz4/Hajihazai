@@ -39,15 +39,15 @@ export default async function Home() {
         <div className="flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm text-muted-foreground">
           <Sparkles className="size-4" /> HajiHaz AI
         </div>
-        <h1 className="text-4xl font-semibold tracking-tight">
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
           Welcome to HajiHaz AI
         </h1>
-        <p className="max-w-md text-muted-foreground">
+        <p className="max-w-md text-sm text-muted-foreground sm:text-base">
           Sign in to start chatting. Your conversations are saved and ready
           whenever you return.
         </p>
-        <form action={signInWithGoogle}>
-          <button className="flex items-center gap-3 rounded-lg border bg-background px-5 py-2.5 text-sm font-medium hover:bg-accent">
+        <form action={signInWithGoogle} className="w-full max-w-xs">
+          <button className="flex min-h-11 w-full items-center justify-center gap-3 rounded-lg border bg-background px-5 text-sm font-medium hover:bg-accent">
             <GoogleIcon />
             Continue with Google
           </button>
