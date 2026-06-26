@@ -24,10 +24,11 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     enabled: true,
   },
   {
-    modelId: "gemini:1.5-flash",
+    // gemini-1.5-flash is retired on current API keys (404). Use 2.0 Flash.
+    modelId: "gemini:2.0-flash",
     provider: "gemini",
-    model: "gemini-1.5-flash",
-    displayName: "Gemini 1.5 Flash",
+    model: "gemini-2.0-flash",
+    displayName: "Gemini 2.0 Flash",
     contextWindow: 1_000_000,
     enabled: true,
   },

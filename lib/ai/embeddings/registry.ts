@@ -25,9 +25,11 @@ export const EMBEDDING_REGISTRY: EmbeddingModelEntry[] = [
     enabled: true,
   },
   {
-    modelId: "gemini:text-embedding-004",
+    // text-embedding-004 returns 404 (not available for embedContent on
+    // current API keys). gemini-embedding-001 supports 768-dim output.
+    modelId: "gemini:gemini-embedding-001",
     provider: "gemini",
-    model: "text-embedding-004",
+    model: "gemini-embedding-001",
     dimensions: 768,
     enabled: true,
   },
