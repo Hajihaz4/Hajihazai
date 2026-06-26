@@ -11,7 +11,7 @@ type Status = "success" | "error" | "timeout";
  */
 export const AUDIT_MAX_PAYLOAD_CHARS = 2000;
 
-function serialize(value: unknown): string {
+export function serializeAuditPayload(value: unknown): string {
   try {
     return JSON.stringify(value ?? null);
   } catch {
@@ -19,9 +19,9 @@ function serialize(value: unknown): string {
   }
 }
 
-/** Returns the value to store (capped) plus its true serialized size. */
-function capPayload(value: unknown): { stored: unknown; size: number } {
-  const str = serialize(value);
+/** Returns the value to store (capped) plus its true serialized size. Pure. */
+export function capAuditPayload(value: unknown): { stored: unknown; size: number } {
+  const str = serializeAuditPayload(value);
   if (str.length > AUDIT_MAX_PAYLOAD_CHARS) {
     return {
       stored: { _truncated: true, size: str.length, preview: str.slice(0, 200) },
@@ -45,8 +45,8 @@ export async function recordToolInvocation(row: {
   error?: string | null;
 }): Promise<void> {
   try {
-    const input = capPayload(row.input);
-    const output = capPayload(row.output);
+    const input = capAuditPayload(row.input);
+    const output = capAuditPayload(row.output);
     await db.insert(toolInvocation).values({
       userId: row.userId,
       toolName: row.toolName,

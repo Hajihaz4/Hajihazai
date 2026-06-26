@@ -1,39 +1,46 @@
+import { MemoryRateLimiter } from "./ratelimit/memory";
+import type { RateLimitResult } from "./ratelimit/types";
+
+export type { RateLimiter, RateLimitResult } from "./ratelimit/types";
+export { MemoryRateLimiter } from "./ratelimit/memory";
+export { UpstashRateLimiter } from "./ratelimit/upstash";
+
 /**
- * Minimal in-memory sliding-window rate limiter (no external infra).
- * Keyed per caller; `now` is injectable for deterministic tests.
- *
- * Note: in-memory state is per-process — adequate for guarding expensive
- * routes (e.g. LLM extraction) at MVP scale. Swap for a shared store
- * (e.g. Upstash) when running multi-instance in production.
+ * The process-wide limiter. To go multi-instance, swap this for an
+ * UpstashRateLimiter (and make callers await — see middleware below).
  */
+const limiter = new MemoryRateLimiter();
 
-const buckets = new Map<string, number[]>();
-
-export interface RateLimitResult {
-  ok: boolean;
-  remaining: number;
-  retryAfterMs?: number;
-}
-
+/** Backward-compatible sync helper (existing callers). */
 export function rateLimit(
   key: string,
   limit: number,
   windowMs: number,
-  now: number = Date.now(),
+  now?: number,
 ): RateLimitResult {
-  const hits = (buckets.get(key) ?? []).filter((t) => now - t < windowMs);
-
-  if (hits.length >= limit) {
-    buckets.set(key, hits);
-    return { ok: false, remaining: 0, retryAfterMs: windowMs - (now - hits[0]) };
-  }
-
-  hits.push(now);
-  buckets.set(key, hits);
-  return { ok: true, remaining: limit - hits.length };
+  return limiter.check(key, limit, windowMs, now) as RateLimitResult;
 }
 
-/** Test helper — clears all buckets. */
+/** Test helper. */
 export function resetRateLimits(): void {
-  buckets.clear();
+  limiter.reset();
+}
+
+/**
+ * Shared route middleware: returns a 429 Response when over the limit, or null
+ * to continue. Used by all rate-limited API routes for consistent behavior.
+ */
+export function rateLimitResponse(
+  key: string,
+  limit: number,
+  windowMs: number,
+): Response | null {
+  const result = rateLimit(key, limit, windowMs);
+  if (result.ok) return null;
+  return new Response("Too many requests. Please wait.", {
+    status: 429,
+    headers: {
+      "Retry-After": String(Math.ceil((result.retryAfterMs ?? 1000) / 1000)),
+    },
+  });
 }

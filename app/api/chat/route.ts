@@ -2,11 +2,18 @@ import { auth } from "@/auth";
 import {
   addMessage,
   getConversation,
-  listMessages,
+  listRecentMessages,
   setConversationTitle,
 } from "@/lib/db/queries";
 import { HAJI_PERSONA } from "@/lib/ai/persona";
 import { routeChat } from "@/lib/ai/router";
+import { rateLimitResponse } from "@/lib/ratelimit";
+
+// Chat makes 1–2 LLM calls per turn — throttle per user (same mechanism as tools).
+const CHAT_RATE_LIMIT = 30;
+const CHAT_RATE_WINDOW_MS = 60_000;
+const MESSAGE_MAX_CHARS = 10_000;
+const TOOL_RESULT_MAX_CHARS = 10_000;
 import {
   buildMemoryContext,
   buildKnowledgeContext,
@@ -28,9 +35,21 @@ export async function POST(req: Request) {
   const debug =
     ["1", "true"].includes(new URL(req.url).searchParams.get("debug") ?? "");
 
+  const limited = rateLimitResponse(
+    `chat:${session.user.id}`,
+    CHAT_RATE_LIMIT,
+    CHAT_RATE_WINDOW_MS,
+  );
+  if (limited) return limited;
+
   const { conversationId, message, modelId } = await req.json();
   if (!conversationId || typeof message !== "string" || !message.trim()) {
     return new Response("Bad request", { status: 400 });
+  }
+  if (message.length > MESSAGE_MAX_CHARS) {
+    return new Response(`message exceeds ${MESSAGE_MAX_CHARS} characters`, {
+      status: 413,
+    });
   }
 
   // Ownership guard — the conversation must belong to the signed-in user.
@@ -55,17 +74,23 @@ export async function POST(req: Request) {
   const tool: ToolExecution = shouldCheckTools(message)
     ? await selectAndRunTool(session.user.id, message, { audit: true })
     : { toolRequested: null, toolExecuted: false, toolResult: null, run: null };
-  const toolBlock =
-    tool.toolExecuted && tool.toolResult != null
-      ? wrapToolOutput(tool.toolRequested?.tool ?? "tool", tool.toolResult)
-      : "";
+  let toolBlock = "";
+  if (tool.toolExecuted && tool.toolResult != null) {
+    // Cap tool result before it enters the prompt.
+    let serialized = JSON.stringify(tool.toolResult);
+    if (serialized.length > TOOL_RESULT_MAX_CHARS) {
+      serialized = serialized.slice(0, TOOL_RESULT_MAX_CHARS) + "…[truncated]";
+    }
+    toolBlock = wrapToolOutput(tool.toolRequested?.tool ?? "tool", serialized);
+  }
 
   // 4. Assemble the prompt:
   //    Persona → Memory → Knowledge → Tool result → History → User message.
-  const history = await listMessages(conversationId);
-  const historyMessages: ChatMessage[] = history
-    .slice(-20)
-    .map((m) => ({ role: m.role, content: m.content }));
+  const history = await listRecentMessages(conversationId, 20);
+  const historyMessages: ChatMessage[] = history.map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
   // In debug we did not persist, so append the current message explicitly.
   if (debug) historyMessages.push({ role: "user", content: message.trim() });
 

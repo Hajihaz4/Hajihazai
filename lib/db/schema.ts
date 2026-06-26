@@ -119,7 +119,8 @@ export const messages = pgTable(
     metadata: jsonb("metadata"),
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
   },
-  (t) => [index("message_conversation_idx").on(t.conversationId)],
+  // Composite supports ordered windowed reads (newest N per conversation).
+  (t) => [index("message_conversation_created_idx").on(t.conversationId, t.createdAt)],
 );
 
 /* ------------------------------------------------------------------ */

@@ -2,7 +2,7 @@ import { auth } from "@/auth";
 import { listTools } from "@/lib/tools/registry";
 import { executeDetectedToolCall } from "@/lib/tools/tool-calling";
 import { recordToolInvocation } from "@/lib/db/tool-queries";
-import { rateLimit } from "@/lib/ratelimit";
+import { rateLimitResponse } from "@/lib/ratelimit";
 
 /** List available tools (developer convenience). */
 export async function GET() {
@@ -20,15 +20,8 @@ export async function POST(req: Request) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const limited = rateLimit(`tools:${session.user.id}`, 60, 60_000);
-  if (!limited.ok) {
-    return new Response("Too many tool requests. Please wait.", {
-      status: 429,
-      headers: {
-        "Retry-After": String(Math.ceil((limited.retryAfterMs ?? 1000) / 1000)),
-      },
-    });
-  }
+  const limited = rateLimitResponse(`tools:${session.user.id}`, 60, 60_000);
+  if (limited) return limited;
 
   const body = await req.json().catch(() => null);
   const tool = body?.tool;

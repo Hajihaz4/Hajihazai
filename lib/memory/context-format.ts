@@ -30,18 +30,23 @@ export interface BlockItem {
 export function buildMemoryBlock<T extends BlockItem>(
   memories: T[],
   budgetTokens = 400,
+  maxChars = Number.POSITIVE_INFINITY,
 ): { block: string; used: T[]; count: number } {
   const used: T[] = [];
   const lines: string[] = [];
   let tokens = approxTokens(MEMORY_GUARD) + approxTokens(MEMORY_HEADER);
+  let chars = MEMORY_GUARD.length + 1 + MEMORY_HEADER.length;
 
   for (const m of memories) {
     const formatted = formatMemoryLine(m.content);
     if (!formatted) continue;
     const line = `- ${formatted}`;
     const lineTokens = approxTokens(line) + 1; // +1 for the newline
-    if (tokens + lineTokens > budgetTokens) break;
+    const lineChars = line.length + 1;
+    // Stop on either the token budget OR the hard character cap.
+    if (tokens + lineTokens > budgetTokens || chars + lineChars > maxChars) break;
     tokens += lineTokens;
+    chars += lineChars;
     lines.push(line);
     used.push(m);
   }

@@ -52,6 +52,21 @@ export async function listMessages(conversationId: string) {
     .orderBy(asc(messages.createdAt));
 }
 
+/**
+ * Newest `limit` messages for a conversation, returned in ASC order.
+ * Fetches only the rows needed (ORDER BY createdAt DESC LIMIT n) instead of
+ * loading the whole conversation and slicing in JS (Phase 9.0 hot-path fix).
+ */
+export async function listRecentMessages(conversationId: string, limit = 20) {
+  const rows = await db
+    .select()
+    .from(messages)
+    .where(eq(messages.conversationId, conversationId))
+    .orderBy(desc(messages.createdAt))
+    .limit(limit);
+  return rows.reverse();
+}
+
 export async function addMessage(input: {
   conversationId: string;
   role: "user" | "assistant" | "system";
