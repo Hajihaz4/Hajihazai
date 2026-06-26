@@ -71,7 +71,7 @@ export async function POST(req: Request) {
   try {
     memory = await buildMemoryContext(session.user.id, { query: message });
   } catch (err) {
-    console.error("memory context failed — degrading to none:", err);
+    console.warn("[chat] memory context failed — continuing with empty context:", err);
     memory = { block: "", memories: [], count: 0, fallbackUsed: false };
   }
 
@@ -79,7 +79,7 @@ export async function POST(req: Request) {
   try {
     knowledge = await buildKnowledgeContext(session.user.id, { query: message });
   } catch (err) {
-    console.error("knowledge context failed — degrading to none:", err);
+    console.warn("[chat] knowledge context failed — continuing with empty context:", err);
     knowledge = { block: "", chunks: [], count: 0 };
   }
 

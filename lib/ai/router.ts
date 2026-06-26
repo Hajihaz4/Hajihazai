@@ -24,9 +24,11 @@ export function planRoute(opts: {
   available: Record<ProviderName, boolean>;
 }): ModelEntry[] {
   const enabled = listEnabledModels();
-  const order: ProviderName[] = opts.isProd
-    ? ["gemini", "openrouter", "ollama"]
-    : ["ollama", "gemini", "openrouter"];
+  // Routing order: OpenRouter → Groq → Gemini → Ollama. Unavailable providers
+  // (no key / not reachable) are skipped, so local dev with only Ollama still
+  // resolves to Ollama. `isProd` is accepted for signature stability.
+  void opts.isProd;
+  const order: ProviderName[] = ["openrouter", "groq", "gemini", "ollama"];
 
   const chain: ModelEntry[] = [];
   const pushFirstFor = (p: ProviderName) => {
@@ -55,6 +57,7 @@ export async function routeChat(
     ollama: providers.ollama.isAvailable(),
     gemini: providers.gemini.isAvailable(),
     openrouter: providers.openrouter.isAvailable(),
+    groq: providers.groq.isAvailable(),
   };
 
   const chain = planRoute({
@@ -64,20 +67,27 @@ export async function routeChat(
   });
 
   let lastError: unknown;
-  for (const entry of chain) {
+  for (let i = 0; i < chain.length; i++) {
+    const entry = chain[i];
+    console.log(`[ai] selected provider=${entry.provider} model=${entry.modelId}`);
     try {
       const text = await providers[entry.provider].generate(entry.model, messages, {
         jsonSchema: opts.jsonSchema,
       });
       if (text && text.trim()) {
+        if (i > 0) {
+          console.warn(`[ai] fallback used: ${entry.provider} (after ${i} failure(s))`);
+        }
         return { text, modelId: entry.modelId, provider: entry.provider };
       }
     } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`[ai] provider=${entry.provider} failed: ${reason}`);
       lastError = error;
     }
   }
 
-  console.error("All AI providers failed:", lastError);
+  console.error("[ai] all chat providers failed:", lastError);
   return {
     text: "⚠️ HajiHaz could not reach any AI provider right now. Please try again.",
     modelId: "none",
@@ -98,6 +108,7 @@ export async function routeChatWithTools(
     ollama: providers.ollama.isAvailable(),
     gemini: providers.gemini.isAvailable(),
     openrouter: providers.openrouter.isAvailable(),
+    groq: providers.groq.isAvailable(),
   };
 
   const chain = planRoute({
@@ -107,17 +118,25 @@ export async function routeChatWithTools(
   });
 
   let lastError: unknown;
+  let attempt = 0;
   for (const entry of chain) {
     const provider = providers[entry.provider];
     if (typeof provider.generateWithTools !== "function") continue;
+    console.log(`[ai] tool-select provider=${entry.provider} model=${entry.modelId}`);
     try {
       const result = await provider.generateWithTools(entry.model, messages, tools);
+      if (attempt > 0) {
+        console.warn(`[ai] tool-select fallback used: ${entry.provider}`);
+      }
       return { ...result, modelId: entry.modelId, provider: entry.provider };
     } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`[ai] tool-select provider=${entry.provider} failed: ${reason}`);
       lastError = error;
     }
+    attempt++;
   }
 
-  if (lastError) console.error("All tool-capable providers failed:", lastError);
+  if (lastError) console.error("[ai] all tool-capable providers failed:", lastError);
   return { text: "", toolCalls: [], modelId: "none", provider: "ollama" };
 }

@@ -1,6 +1,6 @@
 /** Shared contracts for the AI infrastructure layer. */
 
-export type ProviderName = "ollama" | "gemini" | "openrouter";
+export type ProviderName = "ollama" | "gemini" | "openrouter" | "groq";
 
 export type ChatRole = "system" | "user" | "assistant";
 
