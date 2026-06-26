@@ -154,11 +154,6 @@ export const calculatorTool: Tool = {
   name: "calculator",
   description:
     "Evaluate a basic arithmetic expression (+ - * / and parentheses). Input: { expression: string }.",
-  schema: {
-    type: "object",
-    properties: { expression: { type: "string" } },
-    required: ["expression"],
-  },
   inputSchema: z.object({
     expression: z
       .string()

@@ -347,6 +347,9 @@ export const toolInvocation = pgTable(
     output: jsonb("output"),
     status: toolInvocationStatus("status").notNull(),
     durationMs: integer("durationMs").notNull(),
+    // Phase 8.4: serialized payload sizes (full payloads are capped on store).
+    inputSize: integer("inputSize").notNull().default(0),
+    outputSize: integer("outputSize").notNull().default(0),
     error: text("error"),
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
   },

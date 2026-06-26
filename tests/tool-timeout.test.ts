@@ -7,7 +7,6 @@ vi.mock("@/lib/tools/router", () => ({
   getTool: () => ({
     name: "slow",
     description: "",
-    schema: { type: "object", properties: {}, required: [] },
     inputSchema: z.object({}),
     execute: async () => undefined,
   }),
@@ -22,7 +21,8 @@ describe.skipIf(!hasDb)("tool timeout", () => {
   it("times out a slow tool execution gracefully", async () => {
     const { executeDetectedToolCall } = await import("@/lib/tools/tool-calling");
     const r = await executeDetectedToolCall("u1", { tool: "slow", input: {} }, 50);
-    expect(r.toolExecuted).toBe(false);
+    expect(r.success).toBe(false);
+    expect(r.status).toBe("timeout");
     expect(r.error).toMatch(/timed out/i);
   });
 });

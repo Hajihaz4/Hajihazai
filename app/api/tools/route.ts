@@ -37,41 +37,41 @@ export async function POST(req: Request) {
     return new Response("tool must be a string", { status: 400 });
   }
 
-  const exec = await executeDetectedToolCall(session.user.id, { tool, input });
+  const run = await executeDetectedToolCall(session.user.id, { tool, input });
 
   // Best-effort audit for actual executions (not validation rejections).
-  if (exec.status && exec.status !== "rejected") {
+  if (run.status !== "rejected") {
     await recordToolInvocation({
       userId: session.user.id,
       toolName: tool,
       input,
-      output: exec.toolResult,
-      status: exec.status,
-      durationMs: exec.durationMs ?? 0,
-      error: exec.error,
+      output: run.result,
+      status: run.status,
+      durationMs: run.durationMs,
+      error: run.error,
     });
   }
 
-  if (exec.toolExecuted) {
-    return Response.json({ tool, output: exec.toolResult });
+  if (run.success) {
+    return Response.json({ tool, output: run.result });
   }
 
-  if (exec.status === "rejected") {
-    if ((exec.error ?? "").startsWith("unknown tool")) {
+  if (run.status === "rejected") {
+    if ((run.error ?? "").startsWith("unknown tool")) {
       return Response.json(
-        { error: exec.error, code: "unknown_tool" },
+        { error: run.error, code: "unknown_tool" },
         { status: 404 },
       );
     }
     return Response.json(
-      { error: exec.error, code: "invalid_input" },
+      { error: run.error, code: "invalid_input" },
       { status: 400 },
     );
   }
 
   // execution error / timeout
   return Response.json(
-    { error: exec.error, code: exec.status },
-    { status: exec.status === "timeout" ? 504 : 500 },
+    { error: run.error, code: run.status },
+    { status: run.status === "timeout" ? 504 : 500 },
   );
 }

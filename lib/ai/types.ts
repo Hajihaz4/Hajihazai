@@ -20,6 +20,24 @@ export interface GenerateOptions {
   jsonSchema?: Record<string, unknown>;
 }
 
+/** Provider-agnostic native tool definition (parameters = JSON schema). */
+export interface NativeToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+/** A native tool call returned by the model (arguments already parsed). */
+export interface NativeToolCall {
+  name: string;
+  arguments: unknown;
+}
+
+export interface GenerateWithToolsResult {
+  text: string;
+  toolCalls: NativeToolCall[];
+}
+
 export interface Provider {
   name: ProviderName;
   /** Whether this provider is usable in the current environment. */
@@ -30,4 +48,10 @@ export interface Provider {
     messages: ChatMessage[],
     opts?: GenerateOptions,
   ): Promise<string>;
+  /** Native function calling (optional capability). Throws on transport error. */
+  generateWithTools?(
+    model: string,
+    messages: ChatMessage[],
+    tools: NativeToolDefinition[],
+  ): Promise<GenerateWithToolsResult>;
 }

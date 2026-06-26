@@ -54,7 +54,7 @@ export async function POST(req: Request) {
   //    At most ONE tool executed; audited; output wrapped in a safety guard.
   const tool: ToolExecution = shouldCheckTools(message)
     ? await selectAndRunTool(session.user.id, message, { audit: true })
-    : { toolRequested: null, toolExecuted: false, toolResult: null };
+    : { toolRequested: null, toolExecuted: false, toolResult: null, run: null };
   const toolBlock =
     tool.toolExecuted && tool.toolResult != null
       ? wrapToolOutput(tool.toolRequested?.tool ?? "tool", tool.toolResult)
@@ -116,6 +116,7 @@ export async function POST(req: Request) {
             toolRequested: tool.toolRequested,
             toolExecuted: tool.toolExecuted,
             toolResult: tool.toolResult,
+            toolRun: tool.run,
           },
         }
       : {}),

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   validateToolInput,
   executeDetectedToolCall,
+  selectAndRunTool,
 } from "@/lib/tools/tool-calling";
 import { getTool } from "@/lib/tools/registry";
 
@@ -35,17 +36,17 @@ describe("input limits + zod validation", () => {
       tool: "calculator",
       input: { expression: "9".repeat(300) },
     });
-    expect(r.toolExecuted).toBe(false);
+    expect(r.success).toBe(false);
     expect(r.status).toBe("rejected");
   });
 });
 
 describe("detection timeout", () => {
-  it("continues with no tool when detection exceeds the timeout", async () => {
-    const { selectAndRunTool } = await import("@/lib/tools/tool-calling");
-    const slowDecide = () => new Promise<string>(() => {}); // never resolves
+  it("continues with no tool when selection exceeds the timeout", async () => {
+    const slowSelect = () =>
+      new Promise<{ toolCalls: [] }>(() => {}); // never resolves
     const r = await selectAndRunTool("u1", "what is 2 + 2", {
-      decide: slowDecide,
+      selectTools: slowSelect,
       detectTimeoutMs: 40,
     });
     expect(r.toolRequested).toBeNull();

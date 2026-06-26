@@ -68,28 +68,34 @@ describe.skipIf(!hasDb)("single tool calling — memory/knowledge (db)", () => {
 
   it("memory tool call returns memories (owner) and respects isolation", async () => {
     if (!ready) return;
-    const decide = async () =>
-      '{"tool":"memory_search","input":{"query":"what company does the user own"}}';
+    const selectTools = async () => ({
+      toolCalls: [
+        { name: "memory_search", arguments: { query: "what company does the user own" } },
+      ],
+    });
 
-    const a = await tc.selectAndRunTool(A, "what company do I own", { decide });
+    const a = await tc.selectAndRunTool(A, "what company do I own", { selectTools });
     expect(a.toolExecuted).toBe(true);
     expect((a.toolResult as any).memories.length).toBeGreaterThan(0);
 
-    const b = await tc.selectAndRunTool(B, "what company do I own", { decide });
+    const b = await tc.selectAndRunTool(B, "what company do I own", { selectTools });
     expect(b.toolExecuted).toBe(true);
     expect((b.toolResult as any).memories.length).toBe(0); // isolation
   });
 
   it("knowledge tool call returns chunks (owner) and respects isolation", async () => {
     if (!ready) return;
-    const decide = async () =>
-      '{"tool":"knowledge_search","input":{"query":"when was Acme founded"}}';
+    const selectTools = async () => ({
+      toolCalls: [
+        { name: "knowledge_search", arguments: { query: "when was Acme founded" } },
+      ],
+    });
 
-    const a = await tc.selectAndRunTool(A, "when was Acme founded", { decide });
+    const a = await tc.selectAndRunTool(A, "when was Acme founded", { selectTools });
     expect(a.toolExecuted).toBe(true);
     expect((a.toolResult as any).chunks.length).toBeGreaterThan(0);
 
-    const b = await tc.selectAndRunTool(B, "when was Acme founded", { decide });
+    const b = await tc.selectAndRunTool(B, "when was Acme founded", { selectTools });
     expect(b.toolExecuted).toBe(true);
     expect((b.toolResult as any).chunks.length).toBe(0); // isolation
   });

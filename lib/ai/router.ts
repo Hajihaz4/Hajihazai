@@ -1,4 +1,10 @@
-import type { ChatMessage, GenerateResult, ProviderName } from "./types";
+import type {
+  ChatMessage,
+  GenerateResult,
+  GenerateWithToolsResult,
+  NativeToolDefinition,
+  ProviderName,
+} from "./types";
 import { listEnabledModels, type ModelEntry } from "./registry";
 import { providers } from "./providers";
 
@@ -77,4 +83,41 @@ export async function routeChat(
     modelId: "none",
     provider: "ollama",
   };
+}
+
+/**
+ * Native function calling across the routed chain. Uses the first available
+ * provider that supports tools. Returns empty toolCalls if none can.
+ */
+export async function routeChatWithTools(
+  messages: ChatMessage[],
+  tools: NativeToolDefinition[],
+  opts: { preferredModelId?: string } = {},
+): Promise<GenerateWithToolsResult & { modelId: string; provider: ProviderName }> {
+  const available: Record<ProviderName, boolean> = {
+    ollama: providers.ollama.isAvailable(),
+    gemini: providers.gemini.isAvailable(),
+    openrouter: providers.openrouter.isAvailable(),
+  };
+
+  const chain = planRoute({
+    preferredModelId: opts.preferredModelId,
+    isProd: process.env.NODE_ENV === "production",
+    available,
+  });
+
+  let lastError: unknown;
+  for (const entry of chain) {
+    const provider = providers[entry.provider];
+    if (typeof provider.generateWithTools !== "function") continue;
+    try {
+      const result = await provider.generateWithTools(entry.model, messages, tools);
+      return { ...result, modelId: entry.modelId, provider: entry.provider };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (lastError) console.error("All tool-capable providers failed:", lastError);
+  return { text: "", toolCalls: [], modelId: "none", provider: "ollama" };
 }

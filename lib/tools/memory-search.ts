@@ -14,11 +14,6 @@ export const memorySearchTool: Tool = {
   name: "memory_search",
   description:
     "Search the user's long-term memories semantically. Input: { query: string }.",
-  schema: {
-    type: "object",
-    properties: { query: { type: "string" } },
-    required: ["query"],
-  },
   inputSchema: z.object({
     query: z
       .string()

@@ -1,74 +1,45 @@
-import { routeChat } from "@/lib/ai/router";
+import { routeChatWithTools } from "@/lib/ai/router";
+import type { NativeToolCall, NativeToolDefinition } from "@/lib/ai/types";
 import { executeTool, getTool } from "./router";
-import { exportToolSpecs } from "./specs";
+import { toToolDefinitions } from "./specs";
 import { recordToolInvocation } from "@/lib/db/tool-queries";
 import type { Tool } from "./types";
 
 /**
- * Phase 8.3 — Hardened single tool calling.
- * One tool max per turn. Zod-validated input, 10s execution timeout, 5s
- * detection timeout, duration/status tracking, and best-effort audit.
- * No loops, recursion, or multi-tool orchestration.
+ * Phase 8.4 — Native single tool calling.
+ * The model selects a tool via the provider's NATIVE function-calling API
+ * (no text protocol, no regex, no JSON extraction, no NO_TOOL sentinel).
+ * We execute exactly ONE tool (the first returned), with validation, timeout,
+ * and best-effort audit. No loops / recursion / multi-tool orchestration.
  */
 
 export const TOOL_TIMEOUT_MS = 10_000;
 export const DETECTION_TIMEOUT_MS = 5_000;
+
+export type ToolStatus = "success" | "error" | "timeout" | "rejected";
 
 export interface DetectedToolCall {
   tool: string;
   input: unknown;
 }
 
-export type ToolStatus = "success" | "error" | "timeout" | "rejected";
+/** Standardized tool execution result (used everywhere). */
+export interface ToolRunResult {
+  success: boolean;
+  tool: string;
+  result: unknown;
+  durationMs: number;
+  status: ToolStatus;
+  error?: string;
+}
 
 export interface ToolExecution {
   toolRequested: DetectedToolCall | null;
   toolExecuted: boolean;
   toolResult: unknown | null;
-  status?: ToolStatus;
+  run: ToolRunResult | null;
   durationMs?: number;
   error?: string;
-}
-
-/** System prompt instructing the model to emit ONLY a JSON tool call or NO_TOOL. */
-export function buildToolSelectionPrompt(): string {
-  const specs = exportToolSpecs();
-  return [
-    "You decide whether ONE tool is needed to answer the user's message.",
-    "Available tools and their JSON input schemas:",
-    JSON.stringify(specs),
-    'If a tool is needed, respond with ONLY a JSON object: {"tool": "<name>", "input": { ...args matching the tool schema }}.',
-    "If no tool is needed, respond with exactly: NO_TOOL",
-    "Return ONLY the JSON object or NO_TOOL. No explanations. No markdown.",
-  ].join("\n");
-}
-
-/** Parse a model response into a tool call, or null (NO_TOOL / malformed). */
-export function detectToolCall(text: string): DetectedToolCall | null {
-  if (!text || typeof text !== "string") return null;
-  const s = text.replace(/```(?:json)?/gi, "").trim();
-
-  if (/^NO_TOOL\b/i.test(s) && !s.includes("{")) return null;
-
-  const start = s.indexOf("{");
-  const end = s.lastIndexOf("}");
-  if (start === -1 || end === -1 || end < start) return null;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(s.slice(start, end + 1));
-  } catch {
-    return null;
-  }
-  if (!parsed || typeof parsed !== "object") return null;
-
-  const obj = parsed as Record<string, unknown>;
-  if (typeof obj.tool !== "string") return null;
-
-  const input = obj.input ?? {};
-  if (typeof input !== "object" || input === null) return null;
-
-  return { tool: obj.tool, input };
 }
 
 /** Validate input with the tool's Zod schema. Friendly error message. */
@@ -104,17 +75,19 @@ export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-/** Validate + execute a single detected tool call (one execution, with timeout). */
+/** Validate + execute a single tool call (one execution, with timeout). */
 export async function executeDetectedToolCall(
   userId: string,
   call: DetectedToolCall,
   timeoutMs: number = TOOL_TIMEOUT_MS,
-): Promise<Omit<ToolExecution, "toolRequested">> {
+): Promise<ToolRunResult> {
   const tool = getTool(call.tool);
   if (!tool) {
     return {
-      toolExecuted: false,
-      toolResult: null,
+      success: false,
+      tool: call.tool,
+      result: null,
+      durationMs: 0,
       status: "rejected",
       error: `unknown tool: ${call.tool}`,
     };
@@ -123,8 +96,10 @@ export async function executeDetectedToolCall(
   const valid = validateToolInput(tool, call.input);
   if (!valid.ok) {
     return {
-      toolExecuted: false,
-      toolResult: null,
+      success: false,
+      tool: call.tool,
+      result: null,
+      durationMs: 0,
       status: "rejected",
       error: valid.error,
     };
@@ -137,82 +112,100 @@ export async function executeDetectedToolCall(
       timeoutMs,
     );
     return {
-      toolExecuted: true,
-      toolResult: result,
-      status: "success",
+      success: true,
+      tool: call.tool,
+      result,
       durationMs: Date.now() - start,
+      status: "success",
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : "tool execution failed";
     return {
-      toolExecuted: false,
-      toolResult: null,
-      status: /timed out/i.test(message) ? "timeout" : "error",
+      success: false,
+      tool: call.tool,
+      result: null,
       durationMs: Date.now() - start,
+      status: /timed out/i.test(message) ? "timeout" : "error",
       error: message,
     };
   }
 }
 
+type SelectFn = (
+  messages: { role: "user"; content: string }[],
+  tools: NativeToolDefinition[],
+) => Promise<{ toolCalls: NativeToolCall[] }>;
+
+const NO_TOOL: ToolExecution = {
+  toolRequested: null,
+  toolExecuted: false,
+  toolResult: null,
+  run: null,
+};
+
 /**
- * Ask the model whether to call a tool and, if so, run exactly ONE.
- * - Detection model call is bounded by `detectTimeoutMs` (default 5s); on
- *   timeout we continue with no tool (no crash).
+ * Native tool selection + single execution.
+ * - The model is given tool definitions and chooses natively (bounded by
+ *   `detectTimeoutMs`, default 5s; on timeout we continue with no tool).
+ * - Only the FIRST returned tool call is executed (one tool per turn).
  * - When `audit` is true, the execution (success/error/timeout) is recorded.
- * - `opts.decide` overrides the model decision (tests).
+ * - `opts.selectTools` overrides the model selection (tests).
  */
 export async function selectAndRunTool(
   userId: string,
   userMessage: string,
   opts: {
-    decide?: (systemPrompt: string, message: string) => Promise<string>;
+    selectTools?: SelectFn;
     timeoutMs?: number;
     detectTimeoutMs?: number;
     audit?: boolean;
   } = {},
 ): Promise<ToolExecution> {
-  const systemPrompt = buildToolSelectionPrompt();
-  const decide =
-    opts.decide ??
-    (async (sys, msg) =>
-      (
-        await routeChat([
-          { role: "system", content: sys },
-          { role: "user", content: msg },
-        ])
-      ).text);
+  const tools = toToolDefinitions();
+  const select: SelectFn =
+    opts.selectTools ??
+    (async (messages, defs) => {
+      const r = await routeChatWithTools(messages, defs);
+      return { toolCalls: r.toolCalls };
+    });
 
-  let decisionText: string;
+  let toolCalls: NativeToolCall[];
   try {
-    decisionText = await withTimeout(
-      decide(systemPrompt, userMessage),
+    const out = await withTimeout(
+      select([{ role: "user", content: userMessage }], tools),
       opts.detectTimeoutMs ?? DETECTION_TIMEOUT_MS,
     );
+    toolCalls = out.toolCalls ?? [];
   } catch {
-    // Detection timed out or errored → continue normal chat, no tool.
-    return { toolRequested: null, toolExecuted: false, toolResult: null };
+    return NO_TOOL; // detection timed out / errored → continue normal chat
   }
 
-  const call = detectToolCall(decisionText);
-  if (!call) {
-    return { toolRequested: null, toolExecuted: false, toolResult: null };
-  }
+  const first = toolCalls[0];
+  if (!first || typeof first.name !== "string") return NO_TOOL;
 
-  // SINGLE execution — no loop.
-  const exec = await executeDetectedToolCall(userId, call, opts.timeoutMs);
+  const call: DetectedToolCall = { tool: first.name, input: first.arguments };
 
-  // Best-effort audit (only for actual executions, not rejections).
-  if (opts.audit && exec.status && exec.status !== "rejected") {
+  // SINGLE execution — only the first call, no loop.
+  const run = await executeDetectedToolCall(userId, call, opts.timeoutMs);
+
+  if (opts.audit && run.status !== "rejected") {
     await recordToolInvocation({
       userId,
       toolName: call.tool,
       input: call.input,
-      output: exec.toolResult,
-      status: exec.status,
-      durationMs: exec.durationMs ?? 0,
-      error: exec.error,
+      output: run.result,
+      status: run.status,
+      durationMs: run.durationMs,
+      error: run.error,
     });
   }
 
-  return { toolRequested: call, ...exec };
+  return {
+    toolRequested: call,
+    toolExecuted: run.success,
+    toolResult: run.result,
+    run,
+    durationMs: run.durationMs,
+    error: run.error,
+  };
 }

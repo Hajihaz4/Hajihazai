@@ -14,11 +14,6 @@ export const knowledgeSearchTool: Tool = {
   name: "knowledge_search",
   description:
     "Search the user's knowledge base semantically. Input: { query: string }.",
-  schema: {
-    type: "object",
-    properties: { query: { type: "string" } },
-    required: ["query"],
-  },
   inputSchema: z.object({
     query: z
       .string()

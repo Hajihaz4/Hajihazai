@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { desc, eq } from "drizzle-orm";
 
 const hasDb = !!process.env.DATABASE_URL;
 
@@ -10,6 +11,10 @@ describe.skipIf(!hasDb)("tool invocation audit (db)", () => {
   let tc: any;
   let A = "";
   let B = "";
+
+  const calcSelect = (expr: string) => async () => ({
+    toolCalls: [{ name: "calculator", arguments: { expression: expr } }],
+  });
 
   beforeAll(async () => {
     ({ db } = await import("@/lib/db"));
@@ -30,10 +35,9 @@ describe.skipIf(!hasDb)("tool invocation audit (db)", () => {
     await db.delete(schema.users).where(inArray(schema.users.id, [A, B]));
   });
 
-  it("records an audit row for an executed tool", async () => {
+  it("records an audit row (with sizes) for an executed tool", async () => {
     await tc.selectAndRunTool(A, "compute it", {
-      decide: async () =>
-        '{"tool":"calculator","input":{"expression":"475000 * 0.22"}}',
+      selectTools: calcSelect("475000 * 0.22"),
       audit: true,
     });
 
@@ -42,27 +46,45 @@ describe.skipIf(!hasDb)("tool invocation audit (db)", () => {
     expect(rows[0].toolName).toBe("calculator");
     expect(rows[0].status).toBe("success");
     expect(typeof rows[0].durationMs).toBe("number");
+    expect(rows[0].inputSize).toBeGreaterThan(0);
+    expect(rows[0].outputSize).toBeGreaterThan(0);
   });
 
   it("does NOT audit when audit flag is off", async () => {
     await tc.selectAndRunTool(B, "compute it", {
-      decide: async () =>
-        '{"tool":"calculator","input":{"expression":"1+1"}}',
+      selectTools: calcSelect("1+1"),
       audit: false,
     });
-    const rows = await toolQ.listToolInvocations(B);
-    expect(rows.length).toBe(0);
+    expect((await toolQ.listToolInvocations(B)).length).toBe(0);
   });
 
-  it("isolates audit history per user", async () => {
-    const aRows = await toolQ.listToolInvocations(A);
-    const bRows = await toolQ.listToolInvocations(B);
+  it("isolates audit history per user + paginates", async () => {
+    const aRows = await toolQ.listToolInvocations(A, { limit: 10, offset: 0 });
     expect(aRows.every((r: any) => r.toolName === "calculator")).toBe(true);
-    expect(bRows.length).toBe(0); // B never audited
+    expect(await toolQ.countToolInvocations(B)).toBe(0);
+  });
+
+  it("caps oversized payloads but records true size", async () => {
+    const big = "x".repeat(5000);
+    await toolQ.recordToolInvocation({
+      userId: A,
+      toolName: "memory_search",
+      input: { query: "q" },
+      output: { big },
+      status: "success",
+      durationMs: 5,
+    });
+    const [{ output, outputSize }] = await db
+      .select({ output: schema.toolInvocation.output, outputSize: schema.toolInvocation.outputSize })
+      .from(schema.toolInvocation)
+      .where(eq(schema.toolInvocation.userId, A))
+      .orderBy(desc(schema.toolInvocation.createdAt))
+      .limit(1);
+    expect(outputSize).toBeGreaterThan(2000);
+    expect((output as any)._truncated).toBe(true);
   });
 
   it("recordToolInvocation is best-effort (no throw on FK violation)", async () => {
-    // A non-existent user id violates the FK; must be swallowed, not thrown.
     await expect(
       toolQ.recordToolInvocation({
         userId: "does-not-exist",

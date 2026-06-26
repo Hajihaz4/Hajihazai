@@ -1,18 +1,13 @@
 /** Tool execution contracts (Phase 8.0+). Deterministic tools only. */
 import type { ZodType } from "zod";
 
-export interface ToolSchema {
-  type: "object";
-  properties: Record<string, unknown>;
-  required?: string[];
-}
-
 export interface Tool {
   name: string;
   description: string;
-  /** Model-facing JSON schema (for tool specs). */
-  schema: ToolSchema;
-  /** Zod schema used to validate input before execution (Phase 8.3). */
+  /**
+   * Zod schema = the SINGLE source of truth for input shape (Phase 8.4).
+   * The model-facing JSON schema is derived from this via z.toJSONSchema.
+   */
   inputSchema: ZodType;
   execute(userId: string, input: unknown): Promise<unknown>;
 }

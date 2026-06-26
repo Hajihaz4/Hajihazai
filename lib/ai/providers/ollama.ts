@@ -1,4 +1,10 @@
-import type { ChatMessage, GenerateOptions, Provider } from "../types";
+import type {
+  ChatMessage,
+  GenerateOptions,
+  NativeToolDefinition,
+  Provider,
+} from "../types";
+import { parseOllamaToolCalls } from "../tool-calls";
 
 const base = () => process.env.OLLAMA_BASE_URL ?? "http://localhost:11434/api";
 
@@ -24,5 +30,28 @@ export const ollamaProvider: Provider = {
     if (!res.ok) throw new Error(`Ollama error ${res.status}`);
     const data = await res.json();
     return data?.message?.content ?? "";
+  },
+
+  async generateWithTools(model, messages: ChatMessage[], tools: NativeToolDefinition[]) {
+    const res = await fetch(`${base()}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: false,
+        tools: tools.map((t) => ({
+          type: "function",
+          function: {
+            name: t.name,
+            description: t.description,
+            parameters: t.parameters,
+          },
+        })),
+      }),
+    });
+    if (!res.ok) throw new Error(`Ollama error ${res.status}`);
+    const data = await res.json();
+    return { text: data?.message?.content ?? "", toolCalls: parseOllamaToolCalls(data) };
   },
 };
