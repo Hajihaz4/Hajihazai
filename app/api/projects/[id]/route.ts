@@ -1,8 +1,38 @@
 import { auth } from "@/auth";
-import { updateProject, deleteProject } from "@/lib/db/project-queries";
+import { getProject, updateProject, deleteProject } from "@/lib/db/project-queries";
+import { listProjectConversations } from "@/lib/db/queries";
+import { listProjectDocuments } from "@/lib/db/knowledge-queries";
 
 const NAME_MAX = 100;
 const TEXT_MAX = 4000;
+
+/** Full project workspace: project + its chats + its documents. */
+export async function GET(
+  _req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const session = await auth();
+  if (!session?.user?.id) return new Response("Unauthorized", { status: 401 });
+  const { id } = await params;
+
+  const project = await getProject(session.user.id, id);
+  if (!project) return new Response("Not found", { status: 404 });
+
+  const [chats, documents] = await Promise.all([
+    listProjectConversations(session.user.id, id),
+    listProjectDocuments(session.user.id, id),
+  ]);
+  return Response.json({
+    project,
+    chats: chats.map((c) => ({ id: c.id, title: c.title })),
+    documents: documents.map((d) => ({
+      id: d.id,
+      title: d.title,
+      status: d.status,
+      createdAt: d.createdAt,
+    })),
+  });
+}
 
 export async function PATCH(
   req: Request,

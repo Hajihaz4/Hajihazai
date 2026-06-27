@@ -49,15 +49,21 @@ export default function ChatApp({
   initialConversations,
   levels: initialLevels,
   isAdmin,
+  openConversationId,
 }: {
   user: User;
   initialConversations: Conv[];
   levels: LevelOption[];
   isAdmin: boolean;
+  openConversationId?: string;
 }) {
   const [conversations, setConversations] = useState<Conv[]>(initialConversations);
   const [activeId, setActiveId] = useState<string | null>(
-    initialConversations[0]?.id ?? null,
+    // Open a specific chat when arriving from a project workspace (?c=…).
+    (openConversationId &&
+      initialConversations.some((c) => c.id === openConversationId)
+      ? openConversationId
+      : initialConversations[0]?.id) ?? null,
   );
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");

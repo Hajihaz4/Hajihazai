@@ -10,6 +10,7 @@ import {
   DEFAULT_DOC_SIMILARITY_THRESHOLD,
   type DocumentSearchHit,
 } from "@/lib/knowledge/semantic-search";
+import { keywordDocumentSearch } from "@/lib/knowledge/keyword-search";
 
 const DEFAULT_BUDGET_TOKENS = 400;
 const SEMANTIC_LIMIT = 10;
@@ -120,23 +121,45 @@ export function buildKnowledgeBlock(
 }
 
 /**
- * Build the knowledge context block from the user's documents via semantic
- * search on the current message. Active + owned documents only (enforced by
- * semanticDocumentSearch). Token budget: max 2000 characters.
+ * Build the knowledge context block from the user's documents on the current
+ * message. Active + owned documents only; scoped to the current project (see
+ * projectScope). Token budget: max 2000 characters.
+ *
+ * Retrieval is two-tier so stored knowledge is ALWAYS usable:
+ *   1. Semantic (embeddings) — best quality, but only works for embedded chunks
+ *      and a healthy embedding provider.
+ *   2. Keyword fallback — runs whenever semantic returns nothing (un-embedded
+ *      chunks or a down provider). This is what makes knowledge override
+ *      hallucination reliably.
  */
 export async function buildKnowledgeContext(
   userId: string,
-  opts: { query?: string; maxChars?: number } = {},
+  opts: { query?: string; maxChars?: number; projectId?: string | null } = {},
 ): Promise<KnowledgeContext> {
   const query = opts.query?.trim();
   if (!query) return { block: "", chunks: [], count: 0 };
 
-  const hits = await semanticDocumentSearch(
-    userId,
-    query,
-    KNOWLEDGE_LIMIT,
-    DEFAULT_DOC_SIMILARITY_THRESHOLD,
-  );
+  let hits: DocumentSearchHit[] = [];
+  try {
+    hits = await semanticDocumentSearch(
+      userId,
+      query,
+      KNOWLEDGE_LIMIT,
+      DEFAULT_DOC_SIMILARITY_THRESHOLD,
+      { projectId: opts.projectId },
+    );
+  } catch (err) {
+    // Embedding provider unavailable — fall through to keyword retrieval.
+    console.warn("[knowledge] semantic search failed, using keyword fallback:", err);
+  }
+
+  if (hits.length === 0) {
+    hits = await keywordDocumentSearch(userId, query, {
+      projectId: opts.projectId,
+      limit: KNOWLEDGE_LIMIT,
+    });
+  }
+
   const { block, used, count } = buildKnowledgeBlock(
     hits,
     opts.maxChars ?? KNOWLEDGE_MAX_CHARS,

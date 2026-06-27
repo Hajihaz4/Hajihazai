@@ -15,7 +15,6 @@ export default function AdminPortal() {
   // Login form.
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [bootstrap, setBootstrap] = useState(false);
 
   // New-admin form.
   const [newU, setNewU] = useState("");
@@ -49,8 +48,7 @@ export default function AdminPortal() {
   async function doLogin(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    const url = bootstrap ? "/api/admin/bootstrap" : "/api/admin/login";
-    const res = await fetch(url, {
+    const res = await fetch("/api/admin/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
@@ -123,29 +121,28 @@ export default function AdminPortal() {
         <form onSubmit={doLogin} className="w-full max-w-sm space-y-3">
           <h1 className="text-center text-2xl font-semibold">Admin Portal</h1>
           <p className="text-center text-sm text-muted-foreground">
-            {bootstrap ? "Create the first admin." : "Sign in with admin credentials."}
+            Sign in with admin credentials.
           </p>
           <input
             className={input}
-            placeholder="Admin username"
+            placeholder="Admin Username"
+            autoComplete="username"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
           />
           <input
             className={input}
             type="password"
-            placeholder="Admin password"
+            placeholder="Admin Password"
+            autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
           <button className="min-h-11 w-full rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90">
-            {bootstrap ? "Create admin" : "Enter"}
+            Enter
           </button>
-          <div className="flex justify-between text-xs text-muted-foreground">
-            <button type="button" onClick={() => setBootstrap((b) => !b)} className="hover:text-foreground">
-              {bootstrap ? "Back to login" : "First time? Initialize admin"}
-            </button>
+          <div className="text-right text-xs text-muted-foreground">
             <a href="/" className="hover:text-foreground">← Back to chat</a>
           </div>
         </form>

@@ -79,10 +79,13 @@ export default function Sidebar({
             <ul className="mb-2 space-y-0.5">
               {projects.map((p) => (
                 <li key={p.id}>
-                  <div className="flex min-h-9 items-center gap-2 rounded-lg px-2 text-sm md:hover:bg-accent/60">
+                  <a
+                    href={`/projects/${p.id}`}
+                    className="flex min-h-9 items-center gap-2 rounded-lg px-2 text-sm active:bg-accent/60 md:hover:bg-accent/60"
+                  >
                     <Folder className="ml-1 size-4 shrink-0 text-muted-foreground" />
                     <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                  </div>
+                  </a>
                 </li>
               ))}
             </ul>

@@ -7,6 +7,7 @@ import {
 } from "@/lib/db/queries";
 import { HAJI_PERSONA } from "@/lib/ai/persona";
 import { routeChat } from "@/lib/ai/router";
+import { getProject } from "@/lib/db/project-queries";
 import { resolveLevel, isLevel, isLevelEnabled } from "@/lib/ai/levels";
 import { isModelUsable } from "@/lib/ai/health";
 import { isAdmin } from "@/lib/auth/admin";
@@ -73,6 +74,16 @@ export async function POST(req: Request) {
     return new Response("Not found", { status: 404 });
   }
 
+  // Project context: knowledge retrieval is scoped to the chat's project (or to
+  // user-level knowledge for a loose chat), and the project's instructions are
+  // injected into the prompt.
+  const projectId = convo.projectId ?? null;
+  let projectInstructions = "";
+  if (projectId) {
+    const project = await getProject(session.user.id, projectId);
+    projectInstructions = project?.instructions?.trim() ?? "";
+  }
+
   // 1. Persist the user's message (skipped in debug, and on regenerate where
   //    the user message already exists in the conversation).
   let userMsg: Awaited<ReturnType<typeof addMessage>> | null = null;
@@ -94,7 +105,10 @@ export async function POST(req: Request) {
 
   let knowledge: Awaited<ReturnType<typeof buildKnowledgeContext>>;
   try {
-    knowledge = await buildKnowledgeContext(session.user.id, { query: message });
+    knowledge = await buildKnowledgeContext(session.user.id, {
+      query: message,
+      projectId,
+    });
   } catch (err) {
     console.warn("[chat] knowledge context failed — continuing with empty context:", err);
     knowledge = { block: "", chunks: [], count: 0 };
@@ -127,6 +141,9 @@ export async function POST(req: Request) {
 
   const chatMessages: ChatMessage[] = [
     { role: "system", content: HAJI_PERSONA.system },
+    ...(projectInstructions
+      ? [{ role: "system" as const, content: `Project instructions:\n${projectInstructions}` }]
+      : []),
     ...(memory.block ? [{ role: "system" as const, content: memory.block }] : []),
     ...(knowledge.block
       ? [{ role: "system" as const, content: knowledge.block }]

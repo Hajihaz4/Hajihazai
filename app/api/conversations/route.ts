@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { createConversation, listConversations } from "@/lib/db/queries";
+import { getProject } from "@/lib/db/project-queries";
 
 export async function GET() {
   const session = await auth();
@@ -8,15 +9,28 @@ export async function GET() {
   }
   const rows = await listConversations(session.user.id);
   return Response.json({
-    conversations: rows.map((c) => ({ id: c.id, title: c.title })),
+    conversations: rows.map((c) => ({
+      id: c.id,
+      title: c.title,
+      projectId: c.projectId,
+    })),
   });
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user?.id) {
     return new Response("Unauthorized", { status: 401 });
   }
-  const convo = await createConversation(session.user.id);
-  return Response.json({ id: convo.id, title: convo.title });
+
+  // Optional: create the chat inside a project the user owns.
+  const body = await req.json().catch(() => null);
+  const projectId = typeof body?.projectId === "string" ? body.projectId : null;
+  if (projectId) {
+    const owned = await getProject(session.user.id, projectId);
+    if (!owned) return new Response("Not found", { status: 404 });
+  }
+
+  const convo = await createConversation(session.user.id, "New chat", projectId);
+  return Response.json({ id: convo.id, title: convo.title, projectId: convo.projectId });
 }

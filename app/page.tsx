@@ -32,7 +32,11 @@ function GoogleIcon() {
   );
 }
 
-export default async function Home() {
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<{ c?: string }>;
+}) {
   const session = await auth();
 
   // Not signed in → clean Google sign-in.
@@ -98,6 +102,7 @@ export default async function Home() {
   // refines availability via GET /api/models, which runs live health probes.
   const levels = listLevels();
   const admin = isAdmin(session.user.email ?? profile?.email);
+  const { c: openConversationId } = await searchParams;
 
   return (
     <ChatApp
@@ -109,6 +114,7 @@ export default async function Home() {
       initialConversations={conversations}
       levels={levels}
       isAdmin={admin}
+      openConversationId={openConversationId}
     />
   );
 }

@@ -3,6 +3,7 @@ import { createContent } from "@/lib/db/knowledge-content-queries";
 import { createChunks } from "@/lib/db/knowledge-chunk-queries";
 import { chunkDocument } from "./chunk";
 import { extractText, extFromName } from "./extract";
+import { embedDocumentChunks } from "./embed-chunks";
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5 MB
 
@@ -45,6 +46,14 @@ export async function ingestDocument(
   await createContent(userId, doc.id, text);
   const chunks = chunkDocument(text);
   await createChunks(userId, doc.id, chunks);
+
+  // Best-effort embedding for semantic search. Keyword retrieval works without
+  // it, so a down embedding provider never blocks ingestion or retrieval.
+  try {
+    await embedDocumentChunks(userId, doc.id);
+  } catch (err) {
+    console.warn("[knowledge] embedding failed (keyword retrieval still works):", err);
+  }
 
   return { ok: true, documentId: doc.id, chunks: chunks.length };
 }

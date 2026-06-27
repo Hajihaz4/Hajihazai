@@ -12,12 +12,33 @@ export async function listConversations(userId: string) {
     .orderBy(desc(conversations.updatedAt));
 }
 
-export async function createConversation(userId: string, title = "New chat") {
+export async function createConversation(
+  userId: string,
+  title = "New chat",
+  projectId: string | null = null,
+) {
   const [row] = await db
     .insert(conversations)
-    .values({ userId, title })
+    .values({ userId, title, projectId })
     .returning();
   return row;
+}
+
+/** Chats that belong to a specific project (ownership-scoped). */
+export async function listProjectConversations(
+  userId: string,
+  projectId: string,
+) {
+  return db
+    .select()
+    .from(conversations)
+    .where(
+      and(
+        eq(conversations.userId, userId),
+        eq(conversations.projectId, projectId),
+      ),
+    )
+    .orderBy(desc(conversations.updatedAt));
 }
 
 /** Fetch a conversation only if it belongs to the given user (ownership guard). */
