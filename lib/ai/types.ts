@@ -9,10 +9,26 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface TokenUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  /** True when the counts are estimated (provider did not report usage). */
+  approx?: boolean;
+}
+
 export interface GenerateResult {
   text: string;
   modelId: string;
   provider: ProviderName;
+  /** The model the caller asked for (before any fallback). */
+  requestedModelId?: string | null;
+  /** Set when a different model served the request than was requested. */
+  fallbackFrom?: string | null;
+  /** Number of providers attempted before one succeeded (1 = no fallback). */
+  attempts?: number;
+  latencyMs?: number;
+  usage?: TokenUsage;
 }
 
 export interface GenerateOptions {

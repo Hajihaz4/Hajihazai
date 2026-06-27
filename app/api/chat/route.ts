@@ -7,6 +7,9 @@ import {
 } from "@/lib/db/queries";
 import { HAJI_PERSONA } from "@/lib/ai/persona";
 import { routeChat } from "@/lib/ai/router";
+import { resolveLevel, isLevel } from "@/lib/ai/levels";
+import { isModelUsable } from "@/lib/ai/health";
+import { isAdmin } from "@/lib/auth/admin";
 import { rateLimitResponse } from "@/lib/ratelimit";
 
 // Chat makes 1–2 LLM calls per turn — throttle per user (same mechanism as tools).
@@ -42,10 +45,20 @@ export async function POST(req: Request) {
   );
   if (limited) return limited;
 
-  const { conversationId, message, modelId } = await req.json();
+  const { conversationId, message, modelId, level, regenerate } = await req.json();
   if (!conversationId || typeof message !== "string" || !message.trim()) {
     return new Response("Bad request", { status: 400 });
   }
+
+  // Resolve the requested capability level (Low/Medium/High/Max) to a healthy
+  // model, falling back down its chain. A raw modelId is honored only if usable.
+  let preferredModelId: string | undefined;
+  if (isLevel(level)) {
+    preferredModelId = resolveLevel(level) ?? undefined;
+  } else if (typeof modelId === "string" && isModelUsable(modelId)) {
+    preferredModelId = modelId;
+  }
+  const admin = isAdmin(session.user.email);
   if (message.length > MESSAGE_MAX_CHARS) {
     return new Response(`message exceeds ${MESSAGE_MAX_CHARS} characters`, {
       status: 413,
@@ -58,9 +71,11 @@ export async function POST(req: Request) {
     return new Response("Not found", { status: 404 });
   }
 
-  // 1. Persist the user's message (skipped in debug to avoid side effects).
-  if (!debug) {
-    await addMessage({ conversationId, role: "user", content: message });
+  // 1. Persist the user's message (skipped in debug, and on regenerate where
+  //    the user message already exists in the conversation).
+  let userMsg: Awaited<ReturnType<typeof addMessage>> | null = null;
+  if (!debug && !regenerate) {
+    userMsg = await addMessage({ conversationId, role: "user", content: message });
   }
 
   // 2. Build memory + knowledge context via semantic retrieval on the message.
@@ -119,14 +134,13 @@ export async function POST(req: Request) {
   ];
 
   // 4. Route through the AI infrastructure layer (with fallback).
-  const result = await routeChat(chatMessages, {
-    preferredModelId: typeof modelId === "string" ? modelId : undefined,
-  });
+  const result = await routeChat(chatMessages, { preferredModelId });
 
   // 5. Persist the assistant reply + auto-title (skipped in debug).
   let title = convo.title;
+  let assistantMsg: Awaited<ReturnType<typeof addMessage>> | null = null;
   if (!debug) {
-    await addMessage({
+    assistantMsg = await addMessage({
       conversationId,
       role: "assistant",
       content: result.text,
@@ -142,8 +156,24 @@ export async function POST(req: Request) {
     conversationId,
     response: result.text,
     modelId: result.modelId, // the model that actually served the response
-    requestedModelId: typeof modelId === "string" ? modelId : null,
+    requestedModelId: preferredModelId ?? null,
+    userMessageId: userMsg?.id ?? null,
+    assistantMessageId: assistantMsg?.id ?? null,
     title,
+    // Admin-only routing diagnostics — never sent to normal users.
+    ...(admin
+      ? {
+          meta: {
+            provider: result.provider,
+            model: result.modelId,
+            requestedModelId: result.requestedModelId ?? null,
+            fallbackFrom: result.fallbackFrom ?? null,
+            attempts: result.attempts ?? null,
+            latencyMs: result.latencyMs ?? null,
+            usage: result.usage ?? null,
+          },
+        }
+      : {}),
     ...(debug
       ? {
           debug: {

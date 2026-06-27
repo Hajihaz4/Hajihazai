@@ -1,42 +1,33 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { RotateCw, Send } from "lucide-react";
-import { listEnabledModels } from "@/lib/ai/registry";
-
-type Msg = {
-  id: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  modelId?: string | null;
-  fallbackFrom?: string | null;
-  error?: boolean;
-  retryText?: string;
-};
-
-// modelId → human label for per-message provenance.
-const MODEL_LABELS: Record<string, string> = Object.fromEntries(
-  listEnabledModels().map((m) => [m.modelId, m.displayName]),
-);
-
-const label = (id?: string | null) => (id ? MODEL_LABELS[id] ?? id : "");
+import { Copy, RotateCw, Send, Trash2 } from "lucide-react";
+import type { Msg } from "./chat-app";
 
 export default function Chat({
   messages,
   input,
   setInput,
   onSend,
+  onCopy,
+  onDelete,
   onRetry,
   sending,
   loading,
+  isAdmin,
+  debug,
 }: {
   messages: Msg[];
   input: string;
   setInput: (v: string) => void;
   onSend: () => void;
-  onRetry: (text: string) => void;
+  onCopy: (text: string) => void;
+  onDelete: (msg: Msg) => void;
+  onRetry: (msg: Msg) => void;
   sending: boolean;
   loading: boolean;
+  isAdmin: boolean;
+  debug: boolean;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -59,59 +50,72 @@ export default function Chat({
             </div>
           ) : (
             <div
-              className="space-y-6"
+              className="space-y-5"
               role="log"
               aria-live="polite"
               aria-relevant="additions"
             >
-              {messages.map((m) => (
-                <div
-                  key={m.id}
-                  className={`flex ${
-                    m.role === "user" ? "justify-end" : "justify-start"
-                  }`}
-                >
-                  <div className="max-w-[85%] sm:max-w-[80%]">
-                    <div
-                      className={`break-anywhere whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm ${
-                        m.role === "user"
-                          ? "bg-primary text-primary-foreground"
-                          : m.error
-                            ? "border border-destructive/30 bg-destructive/10 text-foreground"
-                            : "bg-muted"
-                      }`}
-                    >
-                      {m.content}
-                    </div>
-
-                    {/* Error → Retry */}
-                    {m.error && m.retryText ? (
-                      <button
-                        onClick={() => onRetry(m.retryText!)}
-                        className="mt-1.5 inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium hover:bg-accent"
+              {messages.map((m) => {
+                const isUser = m.role === "user";
+                return (
+                  <div
+                    key={m.id}
+                    className={`group flex flex-col ${
+                      isUser ? "items-end" : "items-start"
+                    }`}
+                  >
+                    <div className="max-w-[85%] sm:max-w-[80%]">
+                      <div
+                        className={`break-anywhere whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm ${
+                          isUser
+                            ? "bg-primary text-primary-foreground"
+                            : m.error
+                              ? "border border-destructive/30 bg-destructive/10 text-foreground"
+                              : "bg-muted"
+                        }`}
                       >
-                        <RotateCw className="size-3.5" /> Retry
-                      </button>
-                    ) : null}
+                        {m.content}
+                      </div>
 
-                    {/* Model provenance / fallback notice */}
-                    {!m.error &&
-                    m.role === "assistant" &&
-                    m.modelId &&
-                    m.modelId !== "none" ? (
-                      m.fallbackFrom ? (
-                        <div className="mt-1 px-1 text-xs text-amber-600">
-                          ⚠️ {label(m.fallbackFrom)} failed — using {label(m.modelId)}
-                        </div>
-                      ) : (
-                        <div className="mt-1 px-1 text-xs text-muted-foreground">
-                          {label(m.modelId)}
-                        </div>
-                      )
-                    ) : null}
+                      {/* Action bar — hover on desktop, always shown on mobile. */}
+                      <div
+                        className={`mt-1 flex items-center gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 ${
+                          isUser ? "justify-end" : "justify-start"
+                        }`}
+                      >
+                        <ActionButton
+                          label="Copy"
+                          onClick={() => onCopy(m.content)}
+                        >
+                          <Copy className="size-3.5" />
+                        </ActionButton>
+
+                        {m.role === "assistant" ? (
+                          <ActionButton
+                            label={m.error ? "Retry" : "Regenerate"}
+                            onClick={() => onRetry(m)}
+                          >
+                            <RotateCw className="size-3.5" />
+                          </ActionButton>
+                        ) : null}
+
+                        <ActionButton
+                          label="Delete"
+                          onClick={() => onDelete(m)}
+                          danger
+                        >
+                          <Trash2 className="size-3.5" />
+                        </ActionButton>
+                      </div>
+
+                      {/* Admin-only debug panel. Normal users never see this. */}
+                      {isAdmin && debug && m.role === "assistant" && m.meta ? (
+                        <DebugPanel meta={m.meta} />
+                      ) : null}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
 
               {sending && (
                 <div className="flex justify-start" aria-live="polite">
@@ -143,7 +147,6 @@ export default function Chat({
             rows={1}
             aria-label="Message"
             placeholder="Message HajiHaz AI…"
-            // text-base (16px) on mobile prevents iOS auto-zoom on focus.
             className="max-h-40 min-h-11 flex-1 resize-none rounded-xl border bg-background px-4 py-3 text-base outline-none focus:ring-2 focus:ring-ring sm:text-sm"
           />
           <button
@@ -157,6 +160,53 @@ export default function Chat({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ActionButton({
+  label,
+  onClick,
+  danger,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className={`flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent ${
+        danger ? "hover:text-destructive" : "hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function DebugPanel({ meta }: { meta: NonNullable<Msg["meta"]> }) {
+  const u = meta.usage;
+  return (
+    <div className="mt-1.5 rounded-md border bg-muted/40 px-2.5 py-1.5 font-mono text-[11px] leading-relaxed text-muted-foreground">
+      <div>
+        provider: {meta.provider ?? "—"} · model: {meta.model ?? "—"}
+      </div>
+      <div>
+        latency: {meta.latencyMs ?? "—"}ms · tokens
+        {u?.approx ? "≈" : ":"} {u?.totalTokens ?? "—"} (p{u?.promptTokens ?? "—"}/c
+        {u?.completionTokens ?? "—"})
+      </div>
+      {meta.fallbackFrom ? (
+        <div className="text-amber-600">
+          fallback: {meta.fallbackFrom} → {meta.model} (attempts {meta.attempts ?? "—"})
+        </div>
+      ) : null}
     </div>
   );
 }

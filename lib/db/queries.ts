@@ -95,3 +95,18 @@ export async function addMessage(input: {
     .where(eq(conversations.id, input.conversationId));
   return row;
 }
+
+/**
+ * Delete a single message the user owns (message → conversation → user).
+ * Returns false if the message doesn't exist or belongs to another user.
+ */
+export async function deleteMessage(userId: string, messageId: string) {
+  const [owned] = await db
+    .select({ id: messages.id })
+    .from(messages)
+    .innerJoin(conversations, eq(messages.conversationId, conversations.id))
+    .where(and(eq(messages.id, messageId), eq(conversations.userId, userId)));
+  if (!owned) return false;
+  await db.delete(messages).where(eq(messages.id, messageId));
+  return true;
+}

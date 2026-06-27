@@ -1,22 +1,36 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { LogOut, Menu, PlusCircle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Bug, LogOut, Menu, PlusCircle } from "lucide-react";
 import Sidebar from "./sidebar";
 import Chat from "./chat";
 import Modal from "./modal";
 import { signOutAction } from "@/app/actions";
 
 type Conv = { id: string; title: string };
-type ModelOption = { modelId: string; displayName: string };
-type Msg = {
+type LevelOption = { level: string; label: string };
+export type MsgMeta = {
+  provider?: string;
+  model?: string;
+  requestedModelId?: string | null;
+  fallbackFrom?: string | null;
+  attempts?: number | null;
+  latencyMs?: number | null;
+  usage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    approx?: boolean;
+  } | null;
+};
+export type Msg = {
   id: string;
+  dbId?: string | null;
   role: "user" | "assistant" | "system";
   content: string;
-  modelId?: string | null;
-  fallbackFrom?: string | null;
   error?: boolean;
   retryText?: string;
+  meta?: MsgMeta | null;
 };
 type User = { name?: string | null; email?: string | null; image?: string | null };
 
@@ -26,11 +40,13 @@ const uuid = () => crypto.randomUUID();
 export default function ChatApp({
   user,
   initialConversations,
-  models,
+  levels: initialLevels,
+  isAdmin,
 }: {
   user: User;
   initialConversations: Conv[];
-  models: ModelOption[];
+  levels: LevelOption[];
+  isAdmin: boolean;
 }) {
   const [conversations, setConversations] = useState<Conv[]>(initialConversations);
   const [activeId, setActiveId] = useState<string | null>(
@@ -40,19 +56,50 @@ export default function ChatApp({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [modelId, setModelId] = useState<string>(models[0]?.modelId ?? "");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const [levels, setLevels] = useState<LevelOption[]>(initialLevels);
+  const [level, setLevel] = useState<string>(initialLevels[0]?.level ?? "medium");
+  const [debug, setDebug] = useState(false);
 
   // Conversation management modals.
   const [pendingDelete, setPendingDelete] = useState<Conv | null>(null);
   const [renaming, setRenaming] = useState<Conv | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
-  // Load the most recent conversation automatically on first render.
+  // Toast.
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function notify(message: string) {
+    setToast(message);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 1800);
+  }
+
+  // Initial conversation + live health refresh (hides failing models).
   useEffect(() => {
     if (activeId) void openConversation(activeId);
+    void refreshLevels();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function refreshLevels() {
+    try {
+      const res = await fetch("/api/models");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data.levels) && data.levels.length > 0) {
+        setLevels(data.levels);
+        setLevel((cur) =>
+          data.levels.some((l: LevelOption) => l.level === cur)
+            ? cur
+            : data.default ?? data.levels[0].level,
+        );
+      }
+    } catch {
+      /* health endpoint best-effort — keep server-provided levels */
+    }
+  }
 
   async function openConversation(id: string) {
     setActiveId(id);
@@ -61,7 +108,15 @@ export default function ChatApp({
     try {
       const res = await fetch(`/api/conversations/${id}/messages`);
       const data = await res.json();
-      setMessages(data.messages ?? []);
+      const loaded: Msg[] = (data.messages ?? []).map(
+        (m: { id: string; role: Msg["role"]; content: string }) => ({
+          id: m.id,
+          dbId: m.id,
+          role: m.role,
+          content: m.content,
+        }),
+      );
+      setMessages(loaded);
     } finally {
       setLoading(false);
     }
@@ -94,7 +149,6 @@ export default function ChatApp({
     const title = renameValue.trim();
     setRenaming(null);
     if (!title) return;
-    // Optimistic update.
     setConversations((p) => p.map((c) => (c.id === id ? { ...c, title } : c)));
     await fetch(`/api/conversations/${id}`, {
       method: "PATCH",
@@ -103,20 +157,62 @@ export default function ChatApp({
     }).catch(() => {});
   }
 
+  /* ---------------------------- message actions --------------------------- */
+
+  async function copyMessage(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      notify("Copied to clipboard");
+    } catch {
+      notify("Copy failed");
+    }
+  }
+
+  function deleteMessage(msg: Msg) {
+    setMessages((p) => p.filter((m) => m.id !== msg.id));
+    if (msg.dbId) {
+      void fetch(`/api/messages/${msg.dbId}`, { method: "DELETE" }).catch(() => {});
+    }
+  }
+
+  function retryMessage(msg: Msg) {
+    // A failed send → resend the original user text.
+    if (msg.error) {
+      setMessages((p) => p.filter((m) => m.id !== msg.id));
+      void runChat(msg.retryText ?? "", {});
+      return;
+    }
+    // An assistant reply → regenerate from the preceding user message.
+    const idx = messages.findIndex((m) => m.id === msg.id);
+    if (idx < 0) return;
+    let priorText = "";
+    for (let i = idx - 1; i >= 0; i--) {
+      if (messages[i].role === "user") {
+        priorText = messages[i].content;
+        break;
+      }
+    }
+    if (!priorText) return;
+    if (msg.dbId) {
+      void fetch(`/api/messages/${msg.dbId}`, { method: "DELETE" }).catch(() => {});
+    }
+    setMessages((p) => p.filter((m) => m.id !== msg.id));
+    void runChat(priorText, { regenerate: true });
+  }
+
   function send() {
     const text = input.trim();
     if (!text || sending) return;
     setInput("");
-    setMessages((p) => [...p, { id: uuid(), role: "user", content: text }]);
-    void runChat(text);
+    const localId = uuid();
+    setMessages((p) => [...p, { id: localId, role: "user", content: text }]);
+    void runChat(text, { userLocalId: localId });
   }
 
-  function retry(text: string) {
-    setMessages((p) => p.filter((m) => !m.error));
-    void runChat(text);
-  }
-
-  async function runChat(text: string) {
+  async function runChat(
+    text: string,
+    opts: { userLocalId?: string; regenerate?: boolean },
+  ) {
     if (sending) return;
     setSending(true);
 
@@ -137,7 +233,12 @@ export default function ChatApp({
         res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ conversationId: convId, message: text, modelId }),
+          body: JSON.stringify({
+            conversationId: convId,
+            message: text,
+            level,
+            regenerate: opts.regenerate ?? false,
+          }),
           signal: controller.signal,
         });
       } finally {
@@ -146,21 +247,23 @@ export default function ChatApp({
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
 
-      const served: string | undefined = data.modelId;
-      const requested: string | undefined = data.requestedModelId ?? modelId;
-      const fallbackFrom =
-        served && served !== "none" && requested && served !== requested
-          ? requested
-          : null;
+      // Patch the just-sent user message with its persisted id (for delete).
+      if (opts.userLocalId && data.userMessageId) {
+        setMessages((p) =>
+          p.map((m) =>
+            m.id === opts.userLocalId ? { ...m, dbId: data.userMessageId } : m,
+          ),
+        );
+      }
 
       setMessages((p) => [
         ...p,
         {
-          id: uuid(),
+          id: data.assistantMessageId ?? uuid(),
+          dbId: data.assistantMessageId ?? null,
           role: "assistant",
           content: data.response ?? "",
-          modelId: data.modelId,
-          fallbackFrom,
+          meta: data.meta ?? null,
         },
       ]);
 
@@ -240,15 +343,33 @@ export default function ChatApp({
           </div>
 
           <div className="ml-auto flex min-w-0 items-center gap-2">
+            {isAdmin ? (
+              <button
+                type="button"
+                onClick={() => setDebug((d) => !d)}
+                aria-label="Toggle debug mode"
+                aria-pressed={debug}
+                title="Debug mode (admin)"
+                className={`flex size-10 shrink-0 items-center justify-center rounded-lg border sm:size-9 ${
+                  debug ? "bg-accent text-foreground" : "text-muted-foreground"
+                }`}
+              >
+                <Bug className="size-4" />
+              </button>
+            ) : null}
+
+            <label className="sr-only" htmlFor="level-select">
+              Response quality level
+            </label>
             <select
-              value={modelId}
-              onChange={(e) => setModelId(e.target.value)}
-              aria-label="Select model"
-              className="min-w-0 max-w-[40vw] truncate rounded-lg border bg-background px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-ring sm:max-w-none sm:px-3 sm:py-1.5"
+              id="level-select"
+              value={level}
+              onChange={(e) => setLevel(e.target.value)}
+              className="min-w-0 rounded-lg border bg-background px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-ring sm:px-3 sm:py-1.5"
             >
-              {models.map((m) => (
-                <option key={m.modelId} value={m.modelId}>
-                  {m.displayName}
+              {levels.map((l) => (
+                <option key={l.level} value={l.level}>
+                  {l.label}
                 </option>
               ))}
             </select>
@@ -270,9 +391,13 @@ export default function ChatApp({
           input={input}
           setInput={setInput}
           onSend={send}
-          onRetry={retry}
+          onCopy={copyMessage}
+          onDelete={deleteMessage}
+          onRetry={retryMessage}
           sending={sending}
           loading={loading}
+          isAdmin={isAdmin}
+          debug={debug}
         />
       </div>
 
@@ -331,6 +456,17 @@ export default function ChatApp({
           </button>
         </div>
       </Modal>
+
+      {/* Toast */}
+      {toast ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-foreground px-4 py-2 text-sm text-background shadow-lg"
+        >
+          {toast}
+        </div>
+      ) : null}
     </div>
   );
 }

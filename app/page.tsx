@@ -3,7 +3,8 @@ import { Sparkles } from "lucide-react";
 import { auth } from "@/auth";
 import { listConversations } from "@/lib/db/queries";
 import { getProfile, isProfileComplete } from "@/lib/db/profile-queries";
-import { listAvailableModels } from "@/lib/ai/available-models";
+import { listHealthyLevels } from "@/lib/ai/levels";
+import { isAdmin } from "@/lib/auth/admin";
 import { signInWithGoogle } from "@/app/actions";
 import ChatApp from "@/components/chat-app";
 
@@ -84,12 +85,10 @@ export default async function Home() {
   const rows = await listConversations(session.user.id);
   const conversations = rows.map((c) => ({ id: c.id, title: c.title }));
 
-  // Only expose models whose provider is actually available in this environment
-  // (e.g. local Ollama is hidden on Vercel).
-  const models = listAvailableModels().map((m) => ({
-    modelId: m.modelId,
-    displayName: m.displayName,
-  }));
+  // Initial healthy levels (provider key present). The client refines this via
+  // GET /api/models, which runs live health probes and hides failing models.
+  const levels = listHealthyLevels();
+  const admin = isAdmin(session.user.email ?? profile?.email);
 
   return (
     <ChatApp
@@ -99,7 +98,8 @@ export default async function Home() {
         image: profile?.profilePicture ?? session.user.image,
       }}
       initialConversations={conversations}
-      models={models}
+      levels={levels}
+      isAdmin={admin}
     />
   );
 }

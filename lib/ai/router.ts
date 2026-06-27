@@ -7,6 +7,18 @@ import type {
 } from "./types";
 import { listEnabledModels, type ModelEntry } from "./registry";
 import { providers } from "./providers";
+import { recordFailure, recordSuccess } from "./health";
+
+function estimateUsage(messages: ChatMessage[], text: string) {
+  // Providers here don't report token usage; approximate at ~4 chars/token.
+  const promptChars = messages.reduce((n, m) => n + m.content.length, 0);
+  return {
+    promptTokens: Math.round(promptChars / 4),
+    completionTokens: Math.round(text.length / 4),
+    totalTokens: Math.round((promptChars + text.length) / 4),
+    approx: true as const,
+  };
+}
 
 /**
  * Pure routing policy (no network) — easy to unit test.
@@ -66,23 +78,41 @@ export async function routeChat(
     available,
   });
 
+  const requestedModelId = chain[0]?.modelId ?? opts.preferredModelId ?? null;
   let lastError: unknown;
   for (let i = 0; i < chain.length; i++) {
     const entry = chain[i];
     console.log(`[ai] selected provider=${entry.provider} model=${entry.modelId}`);
+    const start = Date.now();
     try {
       const text = await providers[entry.provider].generate(entry.model, messages, {
         jsonSchema: opts.jsonSchema,
       });
       if (text && text.trim()) {
+        const latencyMs = Date.now() - start;
+        recordSuccess(entry.modelId, latencyMs);
         if (i > 0) {
           console.warn(`[ai] fallback used: ${entry.provider} (after ${i} failure(s))`);
         }
-        return { text, modelId: entry.modelId, provider: entry.provider };
+        return {
+          text,
+          modelId: entry.modelId,
+          provider: entry.provider,
+          requestedModelId,
+          fallbackFrom:
+            i > 0 && requestedModelId && requestedModelId !== entry.modelId
+              ? requestedModelId
+              : null,
+          attempts: i + 1,
+          latencyMs,
+          usage: estimateUsage(messages, text),
+        };
       }
+      recordFailure(entry.modelId, "empty response");
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       console.warn(`[ai] provider=${entry.provider} failed: ${reason}`);
+      recordFailure(entry.modelId, reason);
       lastError = error;
     }
   }
@@ -92,6 +122,8 @@ export async function routeChat(
     text: "⚠️ HajiHaz could not reach any AI provider right now. Please try again.",
     modelId: "none",
     provider: "ollama",
+    requestedModelId,
+    attempts: chain.length,
   };
 }
 
