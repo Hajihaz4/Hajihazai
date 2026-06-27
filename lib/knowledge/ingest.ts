@@ -57,3 +57,45 @@ export async function ingestDocument(
 
   return { ok: true, documentId: doc.id, chunks: chunks.length };
 }
+
+/**
+ * Ingest plain text pasted directly by the admin — no file parsing needed.
+ * Uses the same chunk→embed pipeline so keyword + semantic retrieval both work.
+ */
+export async function ingestText(
+  userId: string,
+  input: {
+    title: string;
+    content: string;
+    projectId?: string | null;
+    category?: string | null;
+  },
+): Promise<
+  | { ok: true; documentId: string; chunks: number }
+  | { ok: false; error: string }
+> {
+  const text = input.content.trim();
+  if (!text) return { ok: false, error: "Content is empty" };
+  if (Buffer.byteLength(text, "utf8") > MAX_UPLOAD_BYTES) {
+    return { ok: false, error: "Content exceeds the 5 MB limit" };
+  }
+
+  const doc = await createDocument(userId, {
+    title: input.title.trim() || "Untitled",
+    sourceType: "note",
+    projectId: input.projectId ?? null,
+    category: input.category ?? null,
+  });
+
+  await createContent(userId, doc.id, text);
+  const chunks = chunkDocument(text);
+  await createChunks(userId, doc.id, chunks);
+
+  try {
+    await embedDocumentChunks(userId, doc.id);
+  } catch (err) {
+    console.warn("[knowledge] embedding failed (keyword retrieval still works):", err);
+  }
+
+  return { ok: true, documentId: doc.id, chunks: chunks.length };
+}

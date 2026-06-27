@@ -11,6 +11,7 @@ import {
   type DocumentSearchHit,
 } from "@/lib/knowledge/semantic-search";
 import { keywordDocumentSearch } from "@/lib/knowledge/keyword-search";
+import { listSystemProjects } from "@/lib/db/project-queries";
 
 const DEFAULT_BUDGET_TOKENS = 400;
 const SEMANTIC_LIMIT = 10;
@@ -121,6 +122,35 @@ export function buildKnowledgeBlock(
 }
 
 /**
+ * Dual-tier (semantic → keyword) search for one project scope.
+ */
+async function searchScope(
+  userId: string,
+  query: string,
+  projectId: string | null | undefined,
+): Promise<DocumentSearchHit[]> {
+  let hits: DocumentSearchHit[] = [];
+  try {
+    hits = await semanticDocumentSearch(
+      userId,
+      query,
+      KNOWLEDGE_LIMIT,
+      DEFAULT_DOC_SIMILARITY_THRESHOLD,
+      { projectId },
+    );
+  } catch (err) {
+    console.warn("[knowledge] semantic search failed, using keyword fallback:", err);
+  }
+  if (hits.length === 0) {
+    hits = await keywordDocumentSearch(userId, query, {
+      projectId,
+      limit: KNOWLEDGE_LIMIT,
+    });
+  }
+  return hits;
+}
+
+/**
  * Build the knowledge context block from the user's documents on the current
  * message. Active + owned documents only; scoped to the current project (see
  * projectScope). Token budget: max 2000 characters.
@@ -131,6 +161,9 @@ export function buildKnowledgeBlock(
  *   2. Keyword fallback — runs whenever semantic returns nothing (un-embedded
  *      chunks or a down provider). This is what makes knowledge override
  *      hallucination reliably.
+ *
+ * System projects (e.g. "Haji Core") are ALWAYS included regardless of which
+ * project the chat belongs to — their knowledge loads globally for the user.
  */
 export async function buildKnowledgeContext(
   userId: string,
@@ -139,29 +172,26 @@ export async function buildKnowledgeContext(
   const query = opts.query?.trim();
   if (!query) return { block: "", chunks: [], count: 0 };
 
-  let hits: DocumentSearchHit[] = [];
-  try {
-    hits = await semanticDocumentSearch(
-      userId,
-      query,
-      KNOWLEDGE_LIMIT,
-      DEFAULT_DOC_SIMILARITY_THRESHOLD,
-      { projectId: opts.projectId },
-    );
-  } catch (err) {
-    // Embedding provider unavailable — fall through to keyword retrieval.
-    console.warn("[knowledge] semantic search failed, using keyword fallback:", err);
-  }
+  // Primary scope: the conversation's own project (or user-level if null).
+  const primaryHits = await searchScope(userId, query, opts.projectId);
 
-  if (hits.length === 0) {
-    hits = await keywordDocumentSearch(userId, query, {
-      projectId: opts.projectId,
-      limit: KNOWLEDGE_LIMIT,
-    });
+  // Always include system project knowledge (e.g. Haji Core) globally.
+  const systemProjects = await listSystemProjects(userId);
+  const seen = new Set<string>(primaryHits.map((h) => h.chunkId));
+  const allHits: DocumentSearchHit[] = [...primaryHits];
+  for (const sp of systemProjects) {
+    if (sp.id === opts.projectId) continue; // already included above
+    const sysHits = await searchScope(userId, query, sp.id);
+    for (const h of sysHits) {
+      if (!seen.has(h.chunkId)) {
+        seen.add(h.chunkId);
+        allHits.push(h);
+      }
+    }
   }
 
   const { block, used, count } = buildKnowledgeBlock(
-    hits,
+    allHits,
     opts.maxChars ?? KNOWLEDGE_MAX_CHARS,
   );
 

@@ -8,7 +8,7 @@ import Modal from "./modal";
 import ProfileMenu from "./profile-menu";
 
 type Conv = { id: string; title: string };
-type Proj = { id: string; name: string };
+type Proj = { id: string; name: string; isSystem?: boolean };
 type LevelOption = {
   level: string;
   label: string;
@@ -106,9 +106,10 @@ export default function ChatApp({
       if (!res.ok) return;
       const data = await res.json();
       setProjects(
-        (data.projects ?? []).map((p: { id: string; name: string }) => ({
+        (data.projects ?? []).map((p: { id: string; name: string; isSystem?: boolean }) => ({
           id: p.id,
           name: p.name,
+          isSystem: p.isSystem ?? false,
         })),
       );
     } catch {

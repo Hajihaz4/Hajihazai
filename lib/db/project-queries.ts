@@ -2,6 +2,14 @@ import { and, desc, eq } from "drizzle-orm";
 import { db } from "./index";
 import { projects, conversations, type Project } from "./schema";
 
+/** System projects (isSystem = true) inject knowledge into ALL user chats. */
+export async function listSystemProjects(userId: string): Promise<Project[]> {
+  return db
+    .select()
+    .from(projects)
+    .where(and(eq(projects.userId, userId), eq(projects.isSystem, true)));
+}
+
 /**
  * Project workspace data layer. Every function is ownership-scoped by userId —
  * a user can only ever read or mutate their own projects.
@@ -28,7 +36,12 @@ export async function getProject(
 
 export async function createProject(
   userId: string,
-  input: { name: string; description?: string | null; instructions?: string | null },
+  input: {
+    name: string;
+    description?: string | null;
+    instructions?: string | null;
+    isSystem?: boolean;
+  },
 ): Promise<Project> {
   const [row] = await db
     .insert(projects)
@@ -37,6 +50,7 @@ export async function createProject(
       name: input.name,
       description: input.description ?? null,
       instructions: input.instructions ?? null,
+      isSystem: input.isSystem ?? false,
     })
     .returning();
   return row;

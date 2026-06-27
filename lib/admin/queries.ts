@@ -108,3 +108,66 @@ export async function adminListDocuments() {
     .from(knowledgeDocument)
     .orderBy(desc(knowledgeDocument.createdAt));
 }
+
+/** Knowledge documents enriched with user email and project name. */
+export async function adminListKnowledge() {
+  return db
+    .select({
+      id: knowledgeDocument.id,
+      title: knowledgeDocument.title,
+      category: knowledgeDocument.category,
+      sourceType: knowledgeDocument.sourceType,
+      status: knowledgeDocument.status,
+      projectId: knowledgeDocument.projectId,
+      projectName: projects.name,
+      userId: knowledgeDocument.userId,
+      userEmail: users.email,
+      createdAt: knowledgeDocument.createdAt,
+    })
+    .from(knowledgeDocument)
+    .leftJoin(projects, eq(projects.id, knowledgeDocument.projectId))
+    .leftJoin(users, eq(users.id, knowledgeDocument.userId))
+    .orderBy(desc(knowledgeDocument.createdAt));
+}
+
+/** Admin can delete any knowledge document (no ownership restriction). */
+export async function adminDeleteKnowledge(documentId: string): Promise<boolean> {
+  // Re-use the user-scoped helper by providing the actual owner — but since
+  // admin has no userId, we do a direct admin-level delete instead.
+  const [row] = await db
+    .delete(knowledgeDocument)
+    .where(eq(knowledgeDocument.id, documentId))
+    .returning();
+  return !!row;
+}
+
+/** All projects across all users, enriched with user email and isSystem flag. */
+export async function adminListProjectsWithUsers() {
+  return db
+    .select({
+      id: projects.id,
+      name: projects.name,
+      isSystem: projects.isSystem,
+      userId: projects.userId,
+      userEmail: users.email,
+      createdAt: projects.createdAt,
+    })
+    .from(projects)
+    .leftJoin(users, eq(users.id, projects.userId))
+    .orderBy(desc(projects.createdAt));
+}
+
+/**
+ * Minimal project list for UI dropdowns — only id/name/userId so it works
+ * even before migration 0014 (no is_system column selected).
+ */
+export async function adminListProjectsForPicker() {
+  return db
+    .select({
+      id: projects.id,
+      name: projects.name,
+      userId: projects.userId,
+    })
+    .from(projects)
+    .orderBy(projects.name);
+}

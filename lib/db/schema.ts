@@ -234,6 +234,8 @@ export const knowledgeDocument = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     title: text("title").notNull(),
+    // Organisational label (Personal, Education, Family, Business, Trading, Law …).
+    category: text("category"),
     // Project this document belongs to (null = user-level knowledge).
     projectId: text("project_id"),
     sourceType: knowledgeSourceType("sourceType").notNull().default("note"),
@@ -429,6 +431,9 @@ export const projects = pgTable(
     name: text("name").notNull(),
     description: text("description"),
     instructions: text("instructions"),
+    // System projects (e.g. "Haji Core") inject their knowledge into ALL chats
+    // for the owner, regardless of which project the chat belongs to.
+    isSystem: boolean("is_system").notNull().default(false),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
   },

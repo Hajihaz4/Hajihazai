@@ -1,9 +1,20 @@
 "use client";
 
-import { Folder, FolderPlus, MessageSquare, Pencil, Plus, Trash2, X } from "lucide-react";
+import { useState } from "react";
+import {
+  Brain,
+  ChevronRight,
+  Folder,
+  FolderPlus,
+  MessageSquare,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 
 type Conv = { id: string; title: string };
-type Proj = { id: string; name: string };
+type Proj = { id: string; name: string; isSystem?: boolean };
 
 export default function Sidebar({
   conversations,
@@ -28,6 +39,41 @@ export default function Sidebar({
   open: boolean;
   onClose: () => void;
 }) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [projectChats, setProjectChats] = useState<Record<string, Conv[]>>({});
+  const [loadingProj, setLoadingProj] = useState<string | null>(null);
+
+  async function toggleProject(id: string) {
+    if (expanded.has(id)) {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      return;
+    }
+    setExpanded((prev) => new Set([...prev, id]));
+    if (!projectChats[id]) {
+      setLoadingProj(id);
+      try {
+        const res = await fetch(`/api/projects/${id}`);
+        if (res.ok) {
+          const data = await res.json();
+          setProjectChats((prev) => ({ ...prev, [id]: data.chats ?? [] }));
+        }
+      } finally {
+        setLoadingProj(null);
+      }
+    }
+  }
+
+  // System projects float to the top, then alphabetical.
+  const sorted = [...projects].sort((a, b) => {
+    if (a.isSystem && !b.isSystem) return -1;
+    if (!a.isSystem && b.isSystem) return 1;
+    return a.name.localeCompare(b.name);
+  });
+
   return (
     <>
       {open ? (
@@ -73,21 +119,75 @@ export default function Sidebar({
               <FolderPlus className="size-4" />
             </button>
           </div>
-          {projects.length === 0 ? (
+
+          {sorted.length === 0 ? (
             <p className="px-2 pb-2 text-xs text-muted-foreground">No projects yet</p>
           ) : (
             <ul className="mb-2 space-y-0.5">
-              {projects.map((p) => (
-                <li key={p.id}>
-                  <a
-                    href={`/projects/${p.id}`}
-                    className="flex min-h-9 items-center gap-2 rounded-lg px-2 text-sm active:bg-accent/60 md:hover:bg-accent/60"
-                  >
-                    <Folder className="ml-1 size-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                  </a>
-                </li>
-              ))}
+              {sorted.map((p) => {
+                const isOpen = expanded.has(p.id);
+                const chats = projectChats[p.id];
+                return (
+                  <li key={p.id}>
+                    {/* Project row */}
+                    <div className="flex items-center gap-0.5 rounded-lg active:bg-accent/60 md:hover:bg-accent/60">
+                      <button
+                        onClick={() => toggleProject(p.id)}
+                        aria-label={isOpen ? "Collapse project" : "Expand project"}
+                        className="flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground"
+                      >
+                        <ChevronRight
+                          className={`size-3.5 transition-transform duration-150 ${isOpen ? "rotate-90" : ""}`}
+                        />
+                      </button>
+
+                      <a
+                        href={`/projects/${p.id}`}
+                        className="flex min-h-9 flex-1 min-w-0 items-center gap-2 text-sm"
+                      >
+                        {p.isSystem ? (
+                          <Brain className="size-4 shrink-0 text-primary" />
+                        ) : (
+                          <Folder className="size-4 shrink-0 text-muted-foreground" />
+                        )}
+                        <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                        {p.isSystem ? (
+                          <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                            Global
+                          </span>
+                        ) : null}
+                      </a>
+                    </div>
+
+                    {/* Expanded: project chats */}
+                    {isOpen && (
+                      <ul className="ml-5 mt-0.5 space-y-0.5 border-l pl-2">
+                        {loadingProj === p.id && (
+                          <li className="px-2 py-1 text-xs text-muted-foreground">Loading…</li>
+                        )}
+                        {chats?.length === 0 && loadingProj !== p.id && (
+                          <li className="px-2 py-1 text-xs text-muted-foreground">No chats yet</li>
+                        )}
+                        {chats?.map((c) => (
+                          <li key={c.id}>
+                            <div
+                              onClick={() => { onSelect(c.id); onClose(); }}
+                              className={`flex min-h-9 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-sm ${
+                                activeId === c.id
+                                  ? "bg-accent"
+                                  : "active:bg-accent/60 md:hover:bg-accent/60"
+                              }`}
+                            >
+                              <MessageSquare className="size-3.5 shrink-0 text-muted-foreground" />
+                              <span className="min-w-0 flex-1 truncate">{c.title}</span>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
 
@@ -102,7 +202,7 @@ export default function Sidebar({
               <MessageSquare className="size-6 text-muted-foreground/60" />
               <p className="text-sm font-medium">No conversations yet</p>
               <p className="text-xs text-muted-foreground">
-                Tap “New Chat” to start your first conversation.
+                Tap "New Chat" to start your first conversation.
               </p>
             </div>
           ) : (

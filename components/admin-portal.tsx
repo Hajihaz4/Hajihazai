@@ -1,217 +1,535 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+
+/* ── Types ────────────────────────────────────────────────────── */
 
 type AdminRow = { id: string; username: string; createdAt: string; createdBy: string | null };
-type View = "users" | "projects" | "documents";
+type DataTab = "users" | "projects" | "documents" | "knowledge";
+
+type KDoc = {
+  id: string;
+  title: string;
+  category: string | null;
+  sourceType: string;
+  status: string;
+  projectId: string | null;
+  projectName: string | null;
+  userId: string;
+  userEmail: string | null;
+  createdAt: string;
+};
+
+type UserOpt = { id: string; email: string | null };
+type ProjOpt = { id: string; name: string; userId: string };
+
+const CATEGORIES = ["Personal", "Family", "Education", "Business", "Trading", "Law", "Custom"];
+
+/* ── Component ─────────────────────────────────────────────────── */
 
 export default function AdminPortal() {
+  /* auth */
   const [status, setStatus] = useState<"loading" | "login" | "dashboard">("loading");
-  const [admins, setAdmins] = useState<AdminRow[]>([]);
-  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
-  const [view, setView] = useState<View>("users");
-  const [error, setError] = useState<string | null>(null);
 
-  // Login form.
+  /* login form */
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
 
-  // New-admin form.
+  /* shared */
+  const [error, setError] = useState<string | null>(null);
+
+  /* admins section */
+  const [admins, setAdmins] = useState<AdminRow[]>([]);
   const [newU, setNewU] = useState("");
   const [newP, setNewP] = useState("");
 
-  useEffect(() => {
-    void loadAdmins(true);
+  /* data tab */
+  const [dataTab, setDataTab] = useState<DataTab>("users");
+  const [dataRows, setDataRows] = useState<Record<string, unknown>[]>([]);
+
+  /* knowledge list */
+  const [knowledge, setKnowledge] = useState<KDoc[]>([]);
+  const [kSearch, setKSearch] = useState("");
+  const [kCatFilter, setKCatFilter] = useState("");
+  const [kProjFilter, setKProjFilter] = useState("");
+
+  /* knowledge form state */
+  type FormMode = "hidden" | "add" | "edit";
+  const [formMode, setFormMode] = useState<FormMode>("hidden");
+  const [editId, setEditId] = useState<string | null>(null);
+  const [fUserId, setFUserId] = useState("");
+  const [fProjId, setFProjId] = useState("");
+  const [fTitle, setFTitle] = useState("");
+  const [fCategory, setFCategory] = useState("");
+  const [fContent, setFContent] = useState("");
+  const [fSaving, setFSaving] = useState(false);
+
+  /* pickers */
+  const [allUsers, setAllUsers] = useState<UserOpt[]>([]);
+  const [allProjects, setAllProjects] = useState<ProjOpt[]>([]);
+
+  /* ── loaders ───────────────────────────────────────────────── */
+
+  const loadAdmins = useCallback(async (initial = false) => {
+    const res = await fetch("/api/admin/admins");
+    if (res.status === 401) { setStatus("login"); return; }
+    const d = await res.json().catch(() => ({}));
+    setAdmins(d.admins ?? []);
+    setStatus("dashboard");
+    if (initial) {
+      void loadTab("users");
+      void loadKnowledge();
+      void loadPickers();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function loadAdmins(initial = false) {
-    const res = await fetch("/api/admin/admins");
-    if (res.status === 401) {
-      setStatus("login");
-      return;
-    }
-    const data = await res.json().catch(() => ({}));
-    setAdmins(data.admins ?? []);
-    setStatus("dashboard");
-    if (initial) void loadView("users");
+  useEffect(() => { void loadAdmins(true); }, [loadAdmins]);
+
+  async function loadTab(tab: DataTab) {
+    setDataTab(tab);
+    if (tab === "knowledge") { void loadKnowledge(); return; }
+    const res = await fetch(`/api/admin/data?view=${tab}`);
+    if (!res.ok) return;
+    const d = await res.json().catch(() => ({}));
+    setDataRows((d[tab] as Record<string, unknown>[]) ?? []);
   }
 
-  async function loadView(v: View) {
-    setView(v);
-    const res = await fetch(`/api/admin/data?view=${v}`);
+  async function loadKnowledge() {
+    const res = await fetch("/api/admin/knowledge");
     if (!res.ok) return;
-    const data = await res.json().catch(() => ({}));
-    setRows((data[v] as Record<string, unknown>[]) ?? []);
+    const d = await res.json().catch(() => ({}));
+    setKnowledge(d.knowledge ?? []);
   }
+
+  async function loadPickers() {
+    const [uRes, pRes] = await Promise.all([
+      fetch("/api/admin/data?view=users"),
+      fetch("/api/admin/projects"),
+    ]);
+    if (uRes.ok) {
+      const d = await uRes.json().catch(() => ({}));
+      setAllUsers(
+        ((d.users ?? []) as { id: string; email: string | null }[]).map((u) => ({
+          id: u.id, email: u.email,
+        })),
+      );
+    }
+    if (pRes.ok) {
+      const d = await pRes.json().catch(() => ({}));
+      setAllProjects((d.projects ?? []) as ProjOpt[]);
+    }
+  }
+
+  /* ── admin CRUD ─────────────────────────────────────────────── */
 
   async function doLogin(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
+    e.preventDefault(); setError(null);
     const res = await fetch("/api/admin/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setError(data.error ?? "Login failed");
-      return;
-    }
-    setPassword("");
-    void loadAdmins(true);
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { setError(d.error ?? "Login failed"); return; }
+    setPassword(""); void loadAdmins(true);
   }
 
   async function createAdmin(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
+    e.preventDefault(); setError(null);
     const res = await fetch("/api/admin/admins", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: newU, password: newP }),
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setError(data.error ?? "Could not create admin");
-      return;
-    }
-    setNewU("");
-    setNewP("");
-    void loadAdmins();
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { setError(d.error ?? "Could not create admin"); return; }
+    setNewU(""); setNewP(""); void loadAdmins();
   }
 
   async function deleteAdmin(id: string) {
     if (!confirm("Delete this admin?")) return;
     const res = await fetch(`/api/admin/admins/${id}`, { method: "DELETE" });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setError(data.error ?? "Could not delete");
-      return;
-    }
+    if (!res.ok) { const d = await res.json().catch(() => ({})); setError(d.error ?? "Could not delete"); return; }
     void loadAdmins();
   }
 
   async function resetAdmin(id: string) {
-    const pw = prompt("New password (min 8 chars):");
-    if (!pw) return;
+    const pw = prompt("New password (min 8 chars):"); if (!pw) return;
     const res = await fetch(`/api/admin/admins/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password: pw }),
     });
-    const data = await res.json().catch(() => ({}));
-    setError(res.ok ? null : data.error ?? "Could not reset");
+    const d = await res.json().catch(() => ({}));
+    setError(res.ok ? null : (d.error ?? "Could not reset"));
   }
 
   async function logout() {
-    await fetch("/api/admin/logout", { method: "POST" });
-    setStatus("login");
+    await fetch("/api/admin/logout", { method: "POST" }); setStatus("login");
   }
 
-  const input =
-    "w-full rounded-lg border bg-background px-3 py-2.5 text-base outline-none focus:ring-2 focus:ring-ring sm:text-sm";
+  /* ── knowledge CRUD ─────────────────────────────────────────── */
 
-  if (status === "loading") {
-    return <p className="p-8 text-sm text-muted-foreground">Loading…</p>;
+  function openAddForm() {
+    setEditId(null); setFUserId(""); setFProjId(""); setFTitle("");
+    setFCategory(""); setFContent(""); setFormMode("add"); setError(null);
   }
+
+  async function openEditForm(doc: KDoc) {
+    setError(null);
+    const res = await fetch(`/api/admin/knowledge/${doc.id}`);
+    if (!res.ok) { setError("Could not load document"); return; }
+    const d = await res.json().catch(() => ({}));
+    const full = d.document;
+    setEditId(doc.id);
+    setFUserId(doc.userId);
+    setFProjId(doc.projectId ?? "");
+    setFTitle(full?.title ?? "");
+    setFCategory(full?.category ?? "");
+    setFContent(full?.content ?? "");
+    setFormMode("edit");
+  }
+
+  function cancelForm() { setFormMode("hidden"); setEditId(null); setError(null); }
+
+  async function saveKnowledge(e: React.FormEvent) {
+    e.preventDefault(); setError(null);
+    if (!fTitle.trim()) { setError("Title is required"); return; }
+    if (!fContent.trim()) { setError("Content is required"); return; }
+    if (formMode === "add" && !fUserId) { setError("Select a user first"); return; }
+    setFSaving(true);
+    try {
+      let res: Response;
+      if (formMode === "add") {
+        res = await fetch("/api/admin/knowledge", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: fUserId, projectId: fProjId || null,
+            title: fTitle, category: fCategory || null, content: fContent,
+          }),
+        });
+      } else {
+        res = await fetch(`/api/admin/knowledge/${editId}`, {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: fTitle, category: fCategory || null, content: fContent,
+          }),
+        });
+      }
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { setError(d.error ?? "Could not save"); return; }
+      cancelForm(); void loadKnowledge();
+    } finally { setFSaving(false); }
+  }
+
+  async function deleteKnowledge(id: string, title: string) {
+    if (!confirm(`Delete "${title}"?`)) return;
+    const res = await fetch(`/api/admin/knowledge/${id}`, { method: "DELETE" });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); setError(d.error ?? "Could not delete"); return; }
+    void loadKnowledge();
+  }
+
+  /* ── derived data ───────────────────────────────────────────── */
+
+  const userProjects = allProjects.filter((p) => p.userId === fUserId);
+
+  const uniqueCategories = [
+    ...new Set(knowledge.map((d) => d.category).filter(Boolean)),
+  ] as string[];
+  const uniqueProjects = [
+    ...new Map(
+      knowledge
+        .filter((d) => d.projectId && d.projectName)
+        .map((d) => [d.projectId, { id: d.projectId!, name: d.projectName! }]),
+    ).values(),
+  ];
+
+  const filteredKnowledge = knowledge.filter((d) => {
+    if (kSearch && !d.title.toLowerCase().includes(kSearch.toLowerCase())) return false;
+    if (kCatFilter && d.category !== kCatFilter) return false;
+    if (kProjFilter && d.projectId !== kProjFilter) return false;
+    return true;
+  });
+
+  /* ── style helpers ──────────────────────────────────────────── */
+
+  const input = "w-full rounded-lg border bg-background px-3 py-2.5 text-base outline-none focus:ring-2 focus:ring-ring sm:text-sm";
+  const tabBtn = (active: boolean) =>
+    `px-4 py-2 text-sm capitalize transition-colors border-b-2 ${
+      active ? "border-primary font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
+    }`;
+
+  /* ── render ─────────────────────────────────────────────────── */
+
+  if (status === "loading") return <p className="p-8 text-sm text-muted-foreground">Loading…</p>;
 
   if (status === "login") {
     return (
       <main className="flex min-h-dvh flex-col items-center justify-center px-6">
         <form onSubmit={doLogin} className="w-full max-w-sm space-y-3">
           <h1 className="text-center text-2xl font-semibold">Admin Portal</h1>
-          <p className="text-center text-sm text-muted-foreground">
-            Sign in with admin credentials.
-          </p>
-          <input
-            className={input}
-            placeholder="Admin Username"
-            autoComplete="username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-          />
-          <input
-            className={input}
-            type="password"
-            placeholder="Admin Password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
-          <button className="min-h-11 w-full rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90">
-            Enter
-          </button>
-          <div className="text-right text-xs text-muted-foreground">
-            <a href="/" className="hover:text-foreground">← Back to chat</a>
-          </div>
+          <p className="text-center text-sm text-muted-foreground">Sign in with admin credentials.</p>
+          <input className={input} placeholder="Admin Username" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} />
+          <input className={input} type="password" placeholder="Admin Password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <button className="min-h-11 w-full rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90">Enter</button>
+          <div className="text-right text-xs text-muted-foreground"><a href="/" className="hover:text-foreground">← Back to chat</a></div>
         </form>
       </main>
     );
   }
 
   return (
-    <main className="mx-auto min-h-dvh w-full max-w-4xl px-4 py-8">
+    <main className="mx-auto min-h-dvh w-full max-w-5xl px-4 py-8">
+      {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Admin Dashboard</h1>
         <div className="flex gap-2">
           <a href="/" className="rounded-lg border px-3 py-1.5 text-sm hover:bg-accent">Back to chat</a>
-          <button onClick={logout} className="rounded-lg border px-3 py-1.5 text-sm hover:bg-accent">
-            Log out
-          </button>
+          <button onClick={logout} className="rounded-lg border px-3 py-1.5 text-sm hover:bg-accent">Log out</button>
         </div>
       </div>
-      {error ? <p className="mb-4 text-sm text-destructive">{error}</p> : null}
 
-      {/* Admins */}
-      <section className="mb-8">
-        <h2 className="mb-2 text-sm font-semibold">Admins ({admins.length})</h2>
-        <div className="overflow-hidden rounded-lg border">
+      {error && <p className="mb-4 text-sm text-destructive">{error}</p>}
+
+      {/* Admins card */}
+      <section className="mb-8 rounded-xl border p-4">
+        <h2 className="mb-3 text-sm font-semibold">Admins ({admins.length})</h2>
+        <div className="mb-3 overflow-hidden rounded-lg border">
           {admins.map((a) => (
             <div key={a.id} className="flex items-center justify-between border-b px-3 py-2 text-sm last:border-0">
-              <span>{a.username}</span>
-              <span className="flex gap-2">
-                <button onClick={() => resetAdmin(a.id)} className="text-xs text-muted-foreground hover:text-foreground">
-                  Reset password
-                </button>
-                <button onClick={() => deleteAdmin(a.id)} className="text-xs text-destructive hover:opacity-80">
-                  Delete
-                </button>
+              <span className="font-medium">{a.username}</span>
+              <span className="flex gap-3">
+                <button onClick={() => resetAdmin(a.id)} className="text-xs text-muted-foreground hover:text-foreground">Reset password</button>
+                <button onClick={() => deleteAdmin(a.id)} className="text-xs text-destructive hover:opacity-80">Delete</button>
               </span>
             </div>
           ))}
         </div>
-        <form onSubmit={createAdmin} className="mt-3 flex flex-col gap-2 sm:flex-row">
+        <form onSubmit={createAdmin} className="flex flex-col gap-2 sm:flex-row">
           <input className={input} placeholder="New admin username" value={newU} onChange={(e) => setNewU(e.target.value)} />
-          <input className={input} type="password" placeholder="Password" value={newP} onChange={(e) => setNewP(e.target.value)} />
-          <button className="min-h-11 shrink-0 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90">
-            Create admin
-          </button>
+          <input className={input} type="password" placeholder="Password (min 8 chars)" value={newP} onChange={(e) => setNewP(e.target.value)} />
+          <button className="min-h-11 shrink-0 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90">Create</button>
         </form>
       </section>
 
-      {/* Data views */}
-      <section>
-        <div className="mb-2 flex gap-2">
-          {(["users", "projects", "documents"] as View[]).map((v) => (
-            <button
-              key={v}
-              onClick={() => loadView(v)}
-              className={`rounded-lg border px-3 py-1.5 text-sm capitalize ${
-                view === v ? "bg-accent" : "hover:bg-accent"
-              }`}
+      {/* Data tab bar */}
+      <div className="mb-0 flex gap-0 border-b">
+        {(["users", "projects", "documents", "knowledge"] as DataTab[]).map((t) => (
+          <button key={t} onClick={() => loadTab(t)} className={tabBtn(dataTab === t)}>
+            {t === "knowledge" ? "Knowledge Base" : t}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Users / Projects / Documents views ── */}
+      {dataTab !== "knowledge" && (
+        <section className="mt-4">
+          <div className="overflow-x-auto rounded-lg border">
+            <pre className="max-h-96 overflow-auto p-3 text-xs">{JSON.stringify(dataRows, null, 2)}</pre>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">{dataRows.length} record(s)</p>
+        </section>
+      )}
+
+      {/* ── Knowledge Base tab ── */}
+      {dataTab === "knowledge" && (
+        <section className="mt-4">
+
+          {/* Knowledge form (Add / Edit) */}
+          {formMode !== "hidden" && (
+            <div className="mb-6 rounded-xl border bg-muted/30 p-5">
+              <h3 className="mb-4 text-sm font-semibold">
+                {formMode === "add" ? "Add Knowledge" : "Edit Knowledge"}
+              </h3>
+              <form onSubmit={saveKnowledge} className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+
+                  {/* User (add only) */}
+                  {formMode === "add" && (
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-muted-foreground">User *</label>
+                      <select
+                        className={input}
+                        value={fUserId}
+                        onChange={(e) => { setFUserId(e.target.value); setFProjId(""); }}
+                      >
+                        <option value="">Select user…</option>
+                        {allUsers.map((u) => (
+                          <option key={u.id} value={u.id}>{u.email ?? u.id}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Project */}
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                      Project <span className="font-normal text-muted-foreground/70">(optional)</span>
+                    </label>
+                    <select
+                      className={input}
+                      value={fProjId}
+                      onChange={(e) => setFProjId(e.target.value)}
+                      disabled={formMode === "add" && !fUserId}
+                    >
+                      <option value="">No project (user-level)</option>
+                      {(formMode === "add" ? userProjects : allProjects).map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Title */}
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-muted-foreground">Title *</label>
+                    <input
+                      className={input}
+                      placeholder="e.g. College"
+                      value={fTitle}
+                      onChange={(e) => setFTitle(e.target.value)}
+                    />
+                  </div>
+
+                  {/* Category */}
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-muted-foreground">Category</label>
+                    <select className={input} value={fCategory} onChange={(e) => setFCategory(e.target.value)}>
+                      <option value="">None</option>
+                      {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Content */}
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Content *</label>
+                  <textarea
+                    className={`${input} min-h-[140px] resize-y font-mono text-xs leading-relaxed`}
+                    placeholder="Paste knowledge here…"
+                    value={fContent}
+                    onChange={(e) => setFContent(e.target.value)}
+                  />
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {fContent.length.toLocaleString()} characters — automatically chunked and indexed on save.
+                  </p>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    disabled={fSaving}
+                    className="min-h-10 rounded-lg bg-primary px-5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                  >
+                    {fSaving ? "Saving…" : formMode === "add" ? "Add to Knowledge Base" : "Save Changes"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelForm}
+                    className="min-h-10 rounded-lg border px-4 text-sm hover:bg-accent"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Toolbar */}
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            {formMode === "hidden" && (
+              <button
+                onClick={openAddForm}
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+              >
+                + Add Knowledge
+              </button>
+            )}
+            <input
+              className="min-w-0 flex-1 rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+              placeholder="Search by title…"
+              value={kSearch}
+              onChange={(e) => setKSearch(e.target.value)}
+            />
+            <select
+              className="rounded-lg border bg-background px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+              value={kCatFilter}
+              onChange={(e) => setKCatFilter(e.target.value)}
             >
-              {v}
-            </button>
-          ))}
-        </div>
-        <div className="overflow-x-auto rounded-lg border">
-          <pre className="max-h-96 overflow-auto p-3 text-xs">
-            {JSON.stringify(rows, null, 2)}
-          </pre>
-        </div>
-        <p className="mt-1 text-xs text-muted-foreground">{rows.length} record(s)</p>
-      </section>
+              <option value="">All categories</option>
+              {uniqueCategories.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select
+              className="rounded-lg border bg-background px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+              value={kProjFilter}
+              onChange={(e) => setKProjFilter(e.target.value)}
+            >
+              <option value="">All projects</option>
+              {uniqueProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+
+          {/* Knowledge list */}
+          {filteredKnowledge.length === 0 ? (
+            <div className="rounded-xl border p-8 text-center text-sm text-muted-foreground">
+              {knowledge.length === 0
+                ? "No knowledge documents yet. Click \"+ Add Knowledge\" to get started."
+                : "No results match your filters."}
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-xl border">
+              {/* Table header */}
+              <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-3 border-b bg-muted/40 px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <span>Title</span>
+                <span className="w-24 text-center">Category</span>
+                <span className="w-32">Project</span>
+                <span className="w-24 text-right">Created</span>
+                <span className="w-20 text-right">Actions</span>
+              </div>
+
+              {filteredKnowledge.map((doc) => (
+                <div
+                  key={doc.id}
+                  className="grid grid-cols-[1fr_auto_auto_auto_auto] items-center gap-3 border-b px-4 py-3 text-sm last:border-0"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{doc.title}</p>
+                    <p className="truncate text-xs text-muted-foreground">{doc.userEmail ?? doc.userId}</p>
+                  </div>
+                  <span className="w-24 text-center">
+                    {doc.category ? (
+                      <span className="rounded-full bg-accent px-2 py-0.5 text-xs">{doc.category}</span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </span>
+                  <span className="w-32 truncate text-xs text-muted-foreground">
+                    {doc.projectName ?? <span className="italic">User-level</span>}
+                  </span>
+                  <span className="w-24 text-right text-xs text-muted-foreground">
+                    {new Date(doc.createdAt).toLocaleDateString()}
+                  </span>
+                  <span className="flex w-20 justify-end gap-2">
+                    <button
+                      onClick={() => openEditForm(doc)}
+                      className="text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => deleteKnowledge(doc.id, doc.title)}
+                      className="text-xs text-destructive hover:opacity-80"
+                    >
+                      Delete
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            {filteredKnowledge.length} of {knowledge.length} document(s)
+          </p>
+        </section>
+      )}
     </main>
   );
 }
