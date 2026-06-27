@@ -4,27 +4,33 @@ import { useEffect, useState } from "react";
 import { LogOut, Menu, PlusCircle } from "lucide-react";
 import Sidebar from "./sidebar";
 import Chat from "./chat";
+import Modal from "./modal";
 import { signOutAction } from "@/app/actions";
-import { listEnabledModels } from "@/lib/ai/registry";
 
 type Conv = { id: string; title: string };
+type ModelOption = { modelId: string; displayName: string };
 type Msg = {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
   modelId?: string | null;
   fallbackFrom?: string | null;
+  error?: boolean;
+  retryText?: string;
 };
 type User = { name?: string | null; email?: string | null; image?: string | null };
 
-const MODELS = listEnabledModels();
+const CHAT_TIMEOUT_MS = 60_000;
+const uuid = () => crypto.randomUUID();
 
 export default function ChatApp({
   user,
   initialConversations,
+  models,
 }: {
   user: User;
   initialConversations: Conv[];
+  models: ModelOption[];
 }) {
   const [conversations, setConversations] = useState<Conv[]>(initialConversations);
   const [activeId, setActiveId] = useState<string | null>(
@@ -34,9 +40,13 @@ export default function ChatApp({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [modelId, setModelId] = useState<string>(MODELS[0]?.modelId ?? "");
-  // Mobile off-canvas sidebar.
+  const [modelId, setModelId] = useState<string>(models[0]?.modelId ?? "");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Conversation management modals.
+  const [pendingDelete, setPendingDelete] = useState<Conv | null>(null);
+  const [renaming, setRenaming] = useState<Conv | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   // Load the most recent conversation automatically on first render.
   useEffect(() => {
@@ -46,7 +56,7 @@ export default function ChatApp({
 
   async function openConversation(id: string) {
     setActiveId(id);
-    setSidebarOpen(false); // close drawer on mobile after selecting
+    setSidebarOpen(false);
     setLoading(true);
     try {
       const res = await fetch(`/api/conversations/${id}/messages`);
@@ -66,7 +76,10 @@ export default function ChatApp({
     setSidebarOpen(false);
   }
 
-  async function removeConversation(id: string) {
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    const id = pendingDelete.id;
+    setPendingDelete(null);
     await fetch(`/api/conversations/${id}`, { method: "DELETE" });
     setConversations((p) => p.filter((c) => c.id !== id));
     if (activeId === id) {
@@ -75,14 +88,40 @@ export default function ChatApp({
     }
   }
 
-  async function send() {
+  async function saveRename() {
+    if (!renaming) return;
+    const id = renaming.id;
+    const title = renameValue.trim();
+    setRenaming(null);
+    if (!title) return;
+    // Optimistic update.
+    setConversations((p) => p.map((c) => (c.id === id ? { ...c, title } : c)));
+    await fetch(`/api/conversations/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    }).catch(() => {});
+  }
+
+  function send() {
     const text = input.trim();
     if (!text || sending) return;
+    setInput("");
+    setMessages((p) => [...p, { id: uuid(), role: "user", content: text }]);
+    void runChat(text);
+  }
+
+  function retry(text: string) {
+    setMessages((p) => p.filter((m) => !m.error));
+    void runChat(text);
+  }
+
+  async function runChat(text: string) {
+    if (sending) return;
     setSending(true);
 
     let convId = activeId;
     try {
-      // Auto-create a conversation if none is active.
       if (!convId) {
         const res = await fetch("/api/conversations", { method: "POST" });
         const convo: Conv = await res.json();
@@ -91,20 +130,22 @@ export default function ChatApp({
         setActiveId(convId);
       }
 
-      setMessages((p) => [
-        ...p,
-        { id: crypto.randomUUID(), role: "user", content: text },
-      ]);
-      setInput("");
-
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId: convId, message: text, modelId }),
-      });
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
+      let res: Response;
+      try {
+        res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conversationId: convId, message: text, modelId }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
 
-      // Detect fallback: the served model differs from the one the user picked.
       const served: string | undefined = data.modelId;
       const requested: string | undefined = data.requestedModelId ?? modelId;
       const fallbackFrom =
@@ -115,7 +156,7 @@ export default function ChatApp({
       setMessages((p) => [
         ...p,
         {
-          id: crypto.randomUUID(),
+          id: uuid(),
           role: "assistant",
           content: data.response ?? "",
           modelId: data.modelId,
@@ -123,19 +164,23 @@ export default function ChatApp({
         },
       ]);
 
-      // Reflect the auto-generated title in the sidebar.
       if (data.title) {
         setConversations((p) =>
           p.map((c) => (c.id === convId ? { ...c, title: data.title } : c)),
         );
       }
-    } catch {
+    } catch (err) {
+      const aborted = (err as { name?: string })?.name === "AbortError";
       setMessages((p) => [
         ...p,
         {
-          id: crypto.randomUUID(),
+          id: uuid(),
           role: "assistant",
-          content: "⚠️ Failed to reach HajiHaz. Please try again.",
+          content: aborted
+            ? "⏱️ The request timed out. Please try again."
+            : "⚠️ Couldn't reach HajiHaz. Check your connection and try again.",
+          error: true,
+          retryText: text,
         },
       ]);
     } finally {
@@ -150,15 +195,20 @@ export default function ChatApp({
         activeId={activeId}
         onSelect={openConversation}
         onNew={newChat}
-        onDelete={removeConversation}
+        onDelete={(id) =>
+          setPendingDelete(conversations.find((c) => c.id === id) ?? null)
+        }
+        onRename={(id) => {
+          const c = conversations.find((x) => x.id === id) ?? null;
+          setRenaming(c);
+          setRenameValue(c?.title ?? "");
+        }}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />
 
-      {/* min-w-0 lets the chat column shrink below content width on mobile */}
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center gap-2 border-b px-3 py-2.5 sm:px-4 sm:py-3">
-          {/* Hamburger (mobile only) */}
           <button
             type="button"
             onClick={() => setSidebarOpen(true)}
@@ -167,8 +217,6 @@ export default function ChatApp({
           >
             <Menu className="size-5" />
           </button>
-
-          {/* New chat (mobile quick action) */}
           <button
             type="button"
             onClick={newChat}
@@ -178,7 +226,6 @@ export default function ChatApp({
             <PlusCircle className="size-5" />
           </button>
 
-          {/* User identity (hidden on the smallest screens to save room) */}
           <div className="hidden min-w-0 items-center gap-2 sm:flex">
             {user.image ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -199,7 +246,7 @@ export default function ChatApp({
               aria-label="Select model"
               className="min-w-0 max-w-[40vw] truncate rounded-lg border bg-background px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-ring sm:max-w-none sm:px-3 sm:py-1.5"
             >
-              {MODELS.map((m) => (
+              {models.map((m) => (
                 <option key={m.modelId} value={m.modelId}>
                   {m.displayName}
                 </option>
@@ -223,10 +270,67 @@ export default function ChatApp({
           input={input}
           setInput={setInput}
           onSend={send}
+          onRetry={retry}
           sending={sending}
           loading={loading}
         />
       </div>
+
+      {/* Delete confirmation */}
+      <Modal
+        open={!!pendingDelete}
+        onClose={() => setPendingDelete(null)}
+        title="Delete conversation?"
+      >
+        <p className="mb-4 text-sm text-muted-foreground">
+          “{pendingDelete?.title}” and all its messages will be permanently
+          removed. This cannot be undone.
+        </p>
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={() => setPendingDelete(null)}
+            className="min-h-10 rounded-lg border px-4 text-sm hover:bg-accent"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={confirmDelete}
+            className="min-h-10 rounded-lg bg-destructive px-4 text-sm font-medium text-white hover:opacity-90"
+          >
+            Delete
+          </button>
+        </div>
+      </Modal>
+
+      {/* Rename */}
+      <Modal
+        open={!!renaming}
+        onClose={() => setRenaming(null)}
+        title="Rename conversation"
+      >
+        <input
+          autoFocus
+          value={renameValue}
+          onChange={(e) => setRenameValue(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && saveRename()}
+          className="mb-4 w-full rounded-lg border bg-background px-3 py-2.5 text-base outline-none focus:ring-2 focus:ring-ring sm:text-sm"
+        />
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={() => setRenaming(null)}
+            className="min-h-10 rounded-lg border px-4 text-sm hover:bg-accent"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={saveRename}
+            disabled={!renameValue.trim()}
+            className="min-h-10 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
+          >
+            Save
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

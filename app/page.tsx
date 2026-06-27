@@ -3,6 +3,7 @@ import { Sparkles } from "lucide-react";
 import { auth } from "@/auth";
 import { listConversations } from "@/lib/db/queries";
 import { getProfile, isProfileComplete } from "@/lib/db/profile-queries";
+import { listAvailableModels } from "@/lib/ai/available-models";
 import { signInWithGoogle } from "@/app/actions";
 import ChatApp from "@/components/chat-app";
 
@@ -83,6 +84,13 @@ export default async function Home() {
   const rows = await listConversations(session.user.id);
   const conversations = rows.map((c) => ({ id: c.id, title: c.title }));
 
+  // Only expose models whose provider is actually available in this environment
+  // (e.g. local Ollama is hidden on Vercel).
+  const models = listAvailableModels().map((m) => ({
+    modelId: m.modelId,
+    displayName: m.displayName,
+  }));
+
   return (
     <ChatApp
       user={{
@@ -91,6 +99,7 @@ export default async function Home() {
         image: profile?.profilePicture ?? session.user.image,
       }}
       initialConversations={conversations}
+      models={models}
     />
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Send } from "lucide-react";
+import { RotateCw, Send } from "lucide-react";
 import { listEnabledModels } from "@/lib/ai/registry";
 
 type Msg = {
@@ -10,6 +10,8 @@ type Msg = {
   content: string;
   modelId?: string | null;
   fallbackFrom?: string | null;
+  error?: boolean;
+  retryText?: string;
 };
 
 // modelId → human label for per-message provenance.
@@ -24,6 +26,7 @@ export default function Chat({
   input,
   setInput,
   onSend,
+  onRetry,
   sending,
   loading,
 }: {
@@ -31,6 +34,7 @@ export default function Chat({
   input: string;
   setInput: (v: string) => void;
   onSend: () => void;
+  onRetry: (text: string) => void;
   sending: boolean;
   loading: boolean;
 }) {
@@ -45,18 +49,21 @@ export default function Chat({
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div className="mx-auto max-w-3xl px-3 py-5 sm:px-4 sm:py-6">
           {loading ? (
-            <p className="py-24 text-center text-sm text-muted-foreground">
-              Loading conversation…
-            </p>
+            <MessagesSkeleton />
           ) : messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-24 text-center">
+            <div className="flex flex-col items-center justify-center py-20 text-center sm:py-24">
               <h2 className="text-2xl font-semibold">HajiHaz AI</h2>
-              <p className="mt-2 text-muted-foreground">
-                Ask anything to get started.
+              <p className="mt-2 max-w-xs text-sm text-muted-foreground sm:text-base">
+                Ask anything — your conversations are saved automatically.
               </p>
             </div>
           ) : (
-            <div className="space-y-6">
+            <div
+              className="space-y-6"
+              role="log"
+              aria-live="polite"
+              aria-relevant="additions"
+            >
               {messages.map((m) => (
                 <div
                   key={m.id}
@@ -64,17 +71,34 @@ export default function Chat({
                     m.role === "user" ? "justify-end" : "justify-start"
                   }`}
                 >
-                  <div className="max-w-[80%]">
+                  <div className="max-w-[85%] sm:max-w-[80%]">
                     <div
                       className={`break-anywhere whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm ${
                         m.role === "user"
                           ? "bg-primary text-primary-foreground"
-                          : "bg-muted"
+                          : m.error
+                            ? "border border-destructive/30 bg-destructive/10 text-foreground"
+                            : "bg-muted"
                       }`}
                     >
                       {m.content}
                     </div>
-                    {m.role === "assistant" && m.modelId && m.modelId !== "none" ? (
+
+                    {/* Error → Retry */}
+                    {m.error && m.retryText ? (
+                      <button
+                        onClick={() => onRetry(m.retryText!)}
+                        className="mt-1.5 inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium hover:bg-accent"
+                      >
+                        <RotateCw className="size-3.5" /> Retry
+                      </button>
+                    ) : null}
+
+                    {/* Model provenance / fallback notice */}
+                    {!m.error &&
+                    m.role === "assistant" &&
+                    m.modelId &&
+                    m.modelId !== "none" ? (
                       m.fallbackFrom ? (
                         <div className="mt-1 px-1 text-xs text-amber-600">
                           ⚠️ {label(m.fallbackFrom)} failed — using {label(m.modelId)}
@@ -88,10 +112,14 @@ export default function Chat({
                   </div>
                 </div>
               ))}
+
               {sending && (
-                <div className="flex justify-start">
-                  <div className="rounded-2xl bg-muted px-4 py-2.5 text-sm text-muted-foreground">
-                    Haji is thinking…
+                <div className="flex justify-start" aria-live="polite">
+                  <div className="flex items-center gap-1 rounded-2xl bg-muted px-4 py-3">
+                    <span className="sr-only">HajiHaz is responding…</span>
+                    <Dot delay="0ms" />
+                    <Dot delay="150ms" />
+                    <Dot delay="300ms" />
                   </div>
                 </div>
               )}
@@ -113,6 +141,7 @@ export default function Chat({
               }
             }}
             rows={1}
+            aria-label="Message"
             placeholder="Message HajiHaz AI…"
             // text-base (16px) on mobile prevents iOS auto-zoom on focus.
             className="max-h-40 min-h-11 flex-1 resize-none rounded-xl border bg-background px-4 py-3 text-base outline-none focus:ring-2 focus:ring-ring sm:text-sm"
@@ -121,11 +150,40 @@ export default function Chat({
             onClick={onSend}
             disabled={sending || !input.trim()}
             aria-label="Send message"
-            className="flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground disabled:opacity-40"
+            aria-busy={sending}
+            className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground disabled:opacity-40"
           >
             <Send className="size-4" />
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function Dot({ delay }: { delay: string }) {
+  return (
+    <span
+      className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60"
+      style={{ animationDelay: delay }}
+    />
+  );
+}
+
+function MessagesSkeleton() {
+  return (
+    <div className="space-y-6" aria-hidden="true">
+      <div className="flex justify-end">
+        <div className="h-10 w-40 animate-pulse rounded-2xl bg-muted" />
+      </div>
+      <div className="flex justify-start">
+        <div className="h-20 w-64 animate-pulse rounded-2xl bg-muted" />
+      </div>
+      <div className="flex justify-end">
+        <div className="h-10 w-28 animate-pulse rounded-2xl bg-muted" />
+      </div>
+      <div className="flex justify-start">
+        <div className="h-16 w-56 animate-pulse rounded-2xl bg-muted" />
       </div>
     </div>
   );

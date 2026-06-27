@@ -42,6 +42,20 @@ export async function setConversationTitle(id: string, title: string) {
     .where(eq(conversations.id, id));
 }
 
+/** Rename a conversation the user owns (ownership-scoped). Returns null if not owned. */
+export async function renameConversation(
+  userId: string,
+  id: string,
+  title: string,
+) {
+  const [row] = await db
+    .update(conversations)
+    .set({ title, updatedAt: new Date() })
+    .where(and(eq(conversations.id, id), eq(conversations.userId, userId)))
+    .returning();
+  return row ?? null;
+}
+
 /* -------------------------------- Messages -------------------------------- */
 
 export async function listMessages(conversationId: string) {
