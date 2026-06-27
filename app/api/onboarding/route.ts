@@ -39,11 +39,21 @@ export async function POST(req: Request) {
   }
 
   // Race-safe write (DB unique index on lower(username) is the real guard).
-  const result = await completeOnboarding(session.user.id, {
-    username: username.value,
-    mobileNumber: mobile.value,
-    countryCode: countryCode.value,
-  });
+  // Pass the session identity so the profile row is created here if the
+  // sign-in event never managed to (self-healing — see completeOnboarding).
+  const result = await completeOnboarding(
+    session.user.id,
+    {
+      username: username.value,
+      mobileNumber: mobile.value,
+      countryCode: countryCode.value,
+    },
+    {
+      email: session.user.email ?? "",
+      googleName: session.user.name ?? "",
+      profilePicture: session.user.image ?? "",
+    },
+  );
   if (!result.ok) {
     if (result.error === "username_taken") {
       return Response.json({ ok: false, error: "That username is taken" }, { status: 409 });

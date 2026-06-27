@@ -85,6 +85,31 @@ describe.skipIf(!hasDb)("Google profile + onboarding (db)", () => {
     expect(await q.isUsernameAvailable("hajiboss")).toBe(false);
   });
 
+  it("self-heals: completes onboarding when no profile row exists yet (prod bug)", async () => {
+    // Reproduces the production failure: the sign-in event never created a
+    // profile row, so the user reached onboarding with NO user_profiles record.
+    // Previously this returned no_profile → "Profile not found". Now it must
+    // create the row from the passed identity and complete successfully.
+    const s = `${Date.now()}-${Math.round(Math.random() * 1e6)}`;
+    const C = await mkUser(`ob-C-${s}@example.com`);
+    // Sanity: this user has no profile row.
+    expect(await q.getProfile(C)).toBeNull();
+
+    const r = await q.completeOnboarding(
+      C,
+      { username: `selfheal-${s}`, mobileNumber: "5551234567", countryCode: "+1" },
+      { email: `ob-C-${s}@example.com`, googleName: "Ccc", profilePicture: "" },
+    );
+    expect(r.ok).toBe(true);
+    const p = await q.getProfile(C);
+    expect(p?.username).toBe(`selfheal-${s}`);
+    expect(p?.email).toBe(`ob-C-${s}@example.com`);
+    expect(q.isProfileComplete(p)).toBe(true);
+
+    const { inArray } = await import("drizzle-orm");
+    await db.delete(schema.users).where(inArray(schema.users.id, [C]));
+  });
+
   it("rejects a duplicate username case-insensitively (race-safe)", async () => {
     // B already has a profile row from a prior sign-in.
     await q.upsertGoogleProfile({

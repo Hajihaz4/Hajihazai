@@ -87,18 +87,45 @@ export async function isUsernameAvailable(username: string): Promise<boolean> {
 export async function completeOnboarding(
   userId: string,
   input: { username: string; mobileNumber: string; countryCode: string },
+  identity?: {
+    email: string;
+    googleName?: string;
+    profilePicture?: string;
+    googleId?: string;
+  },
 ): Promise<
   | { ok: true; profile: UserProfile }
   | { ok: false; error: "username_taken" | "no_profile" }
 > {
+  const now = new Date();
   try {
+    // Self-heal: guarantee a profile row exists before applying onboarding
+    // fields. Onboarding must NOT depend on the best-effort sign-in event
+    // having created the row — a transient failure there (DB blip, cold
+    // start, legacy account) would otherwise strand the user permanently at
+    // "Profile not found". ON CONFLICT (user_id) DO NOTHING preserves any
+    // Google data already written by the sign-in event.
+    if (identity?.email) {
+      await db
+        .insert(userProfiles)
+        .values({
+          userId,
+          email: identity.email,
+          googleId: identity.googleId || null,
+          googleName: identity.googleName || null,
+          profilePicture: identity.profilePicture || null,
+          lastLogin: now,
+        })
+        .onConflictDoNothing({ target: userProfiles.userId });
+    }
+
     const [row] = await db
       .update(userProfiles)
       .set({
         username: input.username,
         mobileNumber: input.mobileNumber,
         countryCode: input.countryCode,
-        updatedAt: new Date(),
+        updatedAt: now,
       })
       .where(eq(userProfiles.userId, userId))
       .returning();
