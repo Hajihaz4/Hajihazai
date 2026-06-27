@@ -3,13 +3,15 @@ import { adminListKnowledge } from "@/lib/admin/queries";
 import { ingestText } from "@/lib/knowledge/ingest";
 
 export async function GET() {
-  await requireAdmin();
+  const sess = await requireAdmin();
+  if (!sess) return new Response("Unauthorized", { status: 401 });
   const knowledge = await adminListKnowledge();
   return Response.json({ knowledge });
 }
 
 export async function POST(req: Request) {
-  await requireAdmin();
+  const sess = await requireAdmin();
+  if (!sess) return new Response("Unauthorized", { status: 401 });
 
   const { userId, projectId, title, category, content } = await req.json();
 

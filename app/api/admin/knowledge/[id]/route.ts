@@ -12,7 +12,8 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  await requireAdmin();
+  const sess = await requireAdmin();
+  if (!sess) return new Response("Unauthorized", { status: 401 });
   const { id } = await params;
 
   const [doc] = await db
@@ -33,7 +34,8 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  await requireAdmin();
+  const sess = await requireAdmin();
+  if (!sess) return new Response("Unauthorized", { status: 401 });
   const { id } = await params;
   const { title, category, content } = await req.json();
 
@@ -85,7 +87,8 @@ export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  await requireAdmin();
+  const sess = await requireAdmin();
+  if (!sess) return new Response("Unauthorized", { status: 401 });
   const { id } = await params;
   const ok = await adminDeleteKnowledge(id);
   if (!ok) return Response.json({ error: "Not found" }, { status: 404 });

@@ -14,8 +14,14 @@ describe("admin security", () => {
       "app/api/admin/admins/route.ts",
       "app/api/admin/admins/[id]/route.ts",
       "app/api/admin/data/route.ts",
+      "app/api/admin/knowledge/route.ts",
+      "app/api/admin/knowledge/[id]/route.ts",
+      "app/api/admin/projects/route.ts",
     ]) {
-      expect(readFileSync(f, "utf8")).toContain("requireAdmin");
+      const src = readFileSync(f, "utf8");
+      expect(src).toContain("requireAdmin");
+      // Each route must also check the return value — not just call it.
+      expect(src).toContain("if (!sess)");
     }
   });
 
