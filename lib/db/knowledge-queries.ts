@@ -32,18 +32,38 @@ export async function getDocument(userId: string, id: string) {
 
 export async function createDocument(
   userId: string,
-  input: { title: string; sourceType?: SourceType; status?: DocStatus },
+  input: {
+    title: string;
+    sourceType?: SourceType;
+    status?: DocStatus;
+    projectId?: string | null;
+  },
 ) {
   const [row] = await db
     .insert(knowledgeDocument)
     .values({
       userId,
       title: input.title,
+      projectId: input.projectId ?? null,
       ...(input.sourceType ? { sourceType: input.sourceType } : {}),
       ...(input.status ? { status: input.status } : {}),
     })
     .returning();
   return row;
+}
+
+/** Documents for a specific project (ownership-scoped). */
+export async function listProjectDocuments(userId: string, projectId: string) {
+  return db
+    .select()
+    .from(knowledgeDocument)
+    .where(
+      and(
+        eq(knowledgeDocument.userId, userId),
+        eq(knowledgeDocument.projectId, projectId),
+      ),
+    )
+    .orderBy(desc(knowledgeDocument.updatedAt));
 }
 
 export async function updateDocumentStatus(

@@ -7,7 +7,7 @@ import {
 } from "@/lib/db/queries";
 import { HAJI_PERSONA } from "@/lib/ai/persona";
 import { routeChat } from "@/lib/ai/router";
-import { resolveLevel, isLevel } from "@/lib/ai/levels";
+import { resolveLevel, isLevel, isLevelEnabled } from "@/lib/ai/levels";
 import { isModelUsable } from "@/lib/ai/health";
 import { isAdmin } from "@/lib/auth/admin";
 import { rateLimitResponse } from "@/lib/ratelimit";
@@ -54,7 +54,9 @@ export async function POST(req: Request) {
   // model, falling back down its chain. A raw modelId is honored only if usable.
   let preferredModelId: string | undefined;
   if (isLevel(level)) {
-    preferredModelId = resolveLevel(level) ?? undefined;
+    // High/Max are "Coming Soon" — silently route them as Medium.
+    const effective = isLevelEnabled(level) ? level : "medium";
+    preferredModelId = resolveLevel(effective) ?? undefined;
   } else if (typeof modelId === "string" && isModelUsable(modelId)) {
     preferredModelId = modelId;
   }

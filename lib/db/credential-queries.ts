@@ -1,0 +1,107 @@
+import { eq, sql } from "drizzle-orm";
+import { db } from "./index";
+import { userProfiles, users, passwordResetTokens, type UserProfile } from "./schema";
+
+/** Username/password credentials + password-reset token data layer. */
+
+export function isUniqueViolation(err: unknown): boolean {
+  let e = err as { code?: string; message?: string; cause?: unknown } | null;
+  for (let i = 0; i < 5 && e; i++) {
+    if (e.code === "23505") return true;
+    if (/duplicate key|unique constraint/i.test(String(e.message ?? ""))) return true;
+    e = e.cause as typeof e;
+  }
+  return false;
+}
+
+/** Find a profile by username OR email (case-insensitive) for login/reset. */
+export async function getLoginProfile(
+  identifier: string,
+): Promise<UserProfile | null> {
+  const id = identifier.trim();
+  if (!id) return null;
+  const [row] = await db
+    .select()
+    .from(userProfiles)
+    .where(
+      sql`lower(${userProfiles.email}) = lower(${id}) OR lower(${userProfiles.username}) = lower(${id})`,
+    );
+  return row ?? null;
+}
+
+export async function setUserPassword(
+  userId: string,
+  passwordHash: string,
+): Promise<UserProfile | null> {
+  const [row] = await db
+    .update(userProfiles)
+    .set({ passwordHash, updatedAt: new Date() })
+    .where(eq(userProfiles.userId, userId))
+    .returning();
+  return row ?? null;
+}
+
+/** Create a brand-new username/password user (auth user + profile). */
+export async function createPasswordUser(input: {
+  username: string;
+  email: string;
+  passwordHash: string;
+}): Promise<
+  { ok: true; userId: string } | { ok: false; error: "taken" }
+> {
+  try {
+    const [u] = await db
+      .insert(users)
+      .values({ email: input.email, name: input.username })
+      .returning();
+    await db.insert(userProfiles).values({
+      userId: u.id,
+      email: input.email,
+      username: input.username,
+      passwordHash: input.passwordHash,
+    });
+    return { ok: true, userId: u.id };
+  } catch (err) {
+    if (isUniqueViolation(err)) return { ok: false, error: "taken" };
+    throw err;
+  }
+}
+
+/** Change a user's username (case-insensitive uniqueness enforced by DB index). */
+export async function updateUsername(
+  userId: string,
+  username: string,
+): Promise<{ ok: true } | { ok: false; error: "taken" }> {
+  try {
+    await db
+      .update(userProfiles)
+      .set({ username, updatedAt: new Date() })
+      .where(eq(userProfiles.userId, userId));
+    return { ok: true };
+  } catch (err) {
+    if (isUniqueViolation(err)) return { ok: false, error: "taken" };
+    throw err;
+  }
+}
+
+export async function createResetToken(
+  userId: string,
+  tokenHash: string,
+  expiresAt: Date,
+): Promise<void> {
+  await db.insert(passwordResetTokens).values({ userId, tokenHash, expiresAt });
+}
+
+/** Validate + single-use consume a reset token. Returns the userId or null. */
+export async function consumeResetToken(tokenHash: string): Promise<string | null> {
+  const [row] = await db
+    .select()
+    .from(passwordResetTokens)
+    .where(eq(passwordResetTokens.tokenHash, tokenHash));
+  if (!row || row.usedAt || row.expiresAt.getTime() < Date.now()) return null;
+  await db
+    .update(passwordResetTokens)
+    .set({ usedAt: new Date() })
+    .where(eq(passwordResetTokens.id, row.id));
+  return row.userId;
+}

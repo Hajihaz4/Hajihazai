@@ -3,10 +3,11 @@ import { Sparkles } from "lucide-react";
 import { auth } from "@/auth";
 import { listConversations } from "@/lib/db/queries";
 import { getProfile, isProfileComplete } from "@/lib/db/profile-queries";
-import { listHealthyLevels } from "@/lib/ai/levels";
+import { listLevels } from "@/lib/ai/levels";
 import { isAdmin } from "@/lib/auth/admin";
 import { signInWithGoogle } from "@/app/actions";
 import ChatApp from "@/components/chat-app";
+import AuthForm from "@/components/auth-form";
 
 function GoogleIcon() {
   return (
@@ -67,6 +68,14 @@ export default async function Home() {
               </button>
             </form>
 
+            <div className="flex w-full items-center gap-3 py-1 text-xs text-muted-foreground">
+              <span className="h-px flex-1 bg-border" />
+              or
+              <span className="h-px flex-1 bg-border" />
+            </div>
+
+            <AuthForm />
+
             <p className="text-xs text-muted-foreground">
               New users will be guided through a quick onboarding process.
             </p>
@@ -85,9 +94,9 @@ export default async function Home() {
   const rows = await listConversations(session.user.id);
   const conversations = rows.map((c) => ({ id: c.id, title: c.title }));
 
-  // Initial healthy levels (provider key present). The client refines this via
-  // GET /api/models, which runs live health probes and hides failing models.
-  const levels = listHealthyLevels();
+  // Capability levels (Low/Medium active, High/Max "Coming Soon"). The client
+  // refines availability via GET /api/models, which runs live health probes.
+  const levels = listLevels();
   const admin = isAdmin(session.user.email ?? profile?.email);
 
   return (

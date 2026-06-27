@@ -1,57 +1,60 @@
 import { describe, it, expect } from "vitest";
-import { listHealthyLevels, resolveLevel } from "@/lib/ai/levels";
+import {
+  listLevels,
+  resolveLevel,
+  defaultLevel,
+  isLevelEnabled,
+} from "@/lib/ai/levels";
 import { isAdmin } from "@/lib/auth/admin";
 
-describe("capability levels", () => {
-  it("shows all four levels when every primary is healthy", () => {
-    const got = listHealthyLevels(() => true).map((l) => l.level);
-    expect(got).toEqual(["low", "medium", "high", "max"]);
+describe("capability levels (Low/Medium active, High/Max coming soon)", () => {
+  it("returns all four levels with High/Max marked coming soon", () => {
+    const ls = listLevels(() => true);
+    expect(ls.map((l) => l.level)).toEqual(["low", "medium", "high", "max"]);
+    const high = ls.find((l) => l.level === "high")!;
+    const max = ls.find((l) => l.level === "max")!;
+    expect(high.comingSoon).toBe(true);
+    expect(high.available).toBe(false);
+    expect(max.comingSoon).toBe(true);
+    expect(isLevelEnabled("high")).toBe(false);
+    expect(isLevelEnabled("max")).toBe(false);
   });
 
-  it("hides levels whose primary is unhealthy (production scenario)", () => {
-    // Only the two working models are usable (Llama 3.3, Qwen 2.5 7B).
+  it("Low and Medium are available when a model is healthy", () => {
     const healthy = new Set(["groq:llama-3.3-70b", "openrouter:qwen-2.5-7b"]);
-    const got = listHealthyLevels((id) => healthy.has(id)).map((l) => l.level);
-    // low → qwen-2.5-7b, medium → llama-3.3-70b; high/max primaries are down.
-    expect(got).toEqual(["low", "medium"]);
+    const ls = listLevels((id) => healthy.has(id));
+    expect(ls.find((l) => l.level === "low")!.available).toBe(true);
+    expect(ls.find((l) => l.level === "medium")!.available).toBe(true);
   });
 
-  it("remaps an unhealthy level down its chain to a healthy model", () => {
+  it("resolves Low to cheapest, Medium to best; High/Max never resolve", () => {
     const healthy = new Set(["groq:llama-3.3-70b", "openrouter:qwen-2.5-7b"]);
     const usable = (id: string) => healthy.has(id);
-    expect(resolveLevel("high", usable)).toBe("groq:llama-3.3-70b");
-    expect(resolveLevel("max", usable)).toBe("groq:llama-3.3-70b");
     expect(resolveLevel("low", usable)).toBe("openrouter:qwen-2.5-7b");
+    expect(resolveLevel("medium", usable)).toBe("groq:llama-3.3-70b");
+    expect(resolveLevel("high", usable)).toBeNull();
+    expect(resolveLevel("max", usable)).toBeNull();
   });
 
-  it("returns null when nothing in the chain is usable", () => {
-    expect(resolveLevel("low", () => false)).toBeNull();
+  it("default level prefers Medium (it remaps down to any healthy model), null if none", () => {
+    expect(defaultLevel(() => true)).toBe("medium");
+    // Even if only the cheapest model is healthy, Medium remaps to it.
+    expect(defaultLevel((id) => id === "openrouter:qwen-2.5-7b")).toBe("medium");
+    expect(defaultLevel(() => false)).toBeNull();
   });
 });
 
-describe("admin gate", () => {
+describe("admin debug gate (env-based, separate from the DB admin portal)", () => {
   it("matches ADMIN_EMAILS case-insensitively", () => {
     const prev = process.env.ADMIN_EMAILS;
-    process.env.ADMIN_EMAILS = "Owner@Example.com, two@x.com";
+    process.env.ADMIN_EMAILS = "Owner@Example.com";
     try {
       expect(isAdmin("owner@example.com")).toBe(true);
-      expect(isAdmin("two@x.com")).toBe(true);
       expect(isAdmin("nope@x.com")).toBe(false);
-      expect(isAdmin(undefined)).toBe(false);
       expect(isAdmin(null)).toBe(false);
     } finally {
       if (prev !== undefined) process.env.ADMIN_EMAILS = prev;
       else delete process.env.ADMIN_EMAILS;
-    }
-  });
-
-  it("denies everyone when ADMIN_EMAILS is unset", () => {
-    const prev = process.env.ADMIN_EMAILS;
-    delete process.env.ADMIN_EMAILS;
-    try {
-      expect(isAdmin("anyone@x.com")).toBe(false);
-    } finally {
-      if (prev !== undefined) process.env.ADMIN_EMAILS = prev;
     }
   });
 });

@@ -1,6 +1,6 @@
 import { auth } from "@/auth";
 import { probeAll } from "@/lib/ai/health";
-import { listHealthyLevels } from "@/lib/ai/levels";
+import { listLevels, defaultLevel } from "@/lib/ai/levels";
 
 /**
  * Returns the capability levels that are currently healthy, for the model
@@ -14,6 +14,6 @@ export async function GET() {
   }
 
   await probeAll();
-  const levels = listHealthyLevels();
-  return Response.json({ levels, default: levels[0]?.level ?? null });
+  const levels = listLevels();
+  return Response.json({ levels, default: defaultLevel() });
 }

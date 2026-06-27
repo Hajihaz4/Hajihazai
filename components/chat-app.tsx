@@ -1,14 +1,21 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bug, LogOut, Menu, PlusCircle } from "lucide-react";
+import { Bug, Menu, PlusCircle } from "lucide-react";
 import Sidebar from "./sidebar";
 import Chat from "./chat";
 import Modal from "./modal";
-import { signOutAction } from "@/app/actions";
+import ProfileMenu from "./profile-menu";
 
 type Conv = { id: string; title: string };
-type LevelOption = { level: string; label: string };
+type Proj = { id: string; name: string };
+type LevelOption = {
+  level: string;
+  label: string;
+  enabled?: boolean;
+  comingSoon?: boolean;
+  available?: boolean;
+};
 export type MsgMeta = {
   provider?: string;
   model?: string;
@@ -57,9 +64,12 @@ export default function ChatApp({
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [projects, setProjects] = useState<Proj[]>([]);
 
   const [levels, setLevels] = useState<LevelOption[]>(initialLevels);
-  const [level, setLevel] = useState<string>(initialLevels[0]?.level ?? "medium");
+  const [level, setLevel] = useState<string>(
+    initialLevels.find((l) => l.available)?.level ?? "medium",
+  );
   const [debug, setDebug] = useState(false);
 
   // Conversation management modals.
@@ -80,8 +90,40 @@ export default function ChatApp({
   useEffect(() => {
     if (activeId) void openConversation(activeId);
     void refreshLevels();
+    void loadProjects();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function loadProjects() {
+    try {
+      const res = await fetch("/api/projects");
+      if (!res.ok) return;
+      const data = await res.json();
+      setProjects(
+        (data.projects ?? []).map((p: { id: string; name: string }) => ({
+          id: p.id,
+          name: p.name,
+        })),
+      );
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  async function newProject() {
+    const name = window.prompt("Project name");
+    if (!name?.trim()) return;
+    const res = await fetch("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name.trim() }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.project) {
+      setProjects((p) => [{ id: data.project.id, name: data.project.name }, ...p]);
+    }
+  }
 
   async function refreshLevels() {
     try {
@@ -90,11 +132,17 @@ export default function ChatApp({
       const data = await res.json();
       if (Array.isArray(data.levels) && data.levels.length > 0) {
         setLevels(data.levels);
-        setLevel((cur) =>
-          data.levels.some((l: LevelOption) => l.level === cur)
-            ? cur
-            : data.default ?? data.levels[0].level,
-        );
+        setLevel((cur) => {
+          const stillOk = data.levels.find(
+            (l: LevelOption) => l.level === cur && l.available,
+          );
+          if (stillOk) return cur;
+          return (
+            data.default ??
+            data.levels.find((l: LevelOption) => l.available)?.level ??
+            cur
+          );
+        });
       }
     } catch {
       /* health endpoint best-effort — keep server-provided levels */
@@ -295,9 +343,11 @@ export default function ChatApp({
     <div className="flex h-dvh overflow-hidden">
       <Sidebar
         conversations={conversations}
+        projects={projects}
         activeId={activeId}
         onSelect={openConversation}
         onNew={newChat}
+        onNewProject={newProject}
         onDelete={(id) =>
           setPendingDelete(conversations.find((c) => c.id === id) ?? null)
         }
@@ -368,21 +418,14 @@ export default function ChatApp({
               className="min-w-0 rounded-lg border bg-background px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-ring sm:px-3 sm:py-1.5"
             >
               {levels.map((l) => (
-                <option key={l.level} value={l.level}>
+                <option key={l.level} value={l.level} disabled={!l.available}>
                   {l.label}
+                  {l.comingSoon ? " (Coming Soon)" : ""}
                 </option>
               ))}
             </select>
 
-            <form action={signOutAction}>
-              <button
-                aria-label="Sign out"
-                className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg border px-2.5 text-sm hover:bg-accent sm:px-3 sm:py-1.5"
-              >
-                <LogOut className="size-4" />
-                <span className="hidden sm:inline">Sign out</span>
-              </button>
-            </form>
+            <ProfileMenu name={user.name} image={user.image} />
           </div>
         </header>
 

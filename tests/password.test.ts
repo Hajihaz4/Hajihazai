@@ -1,0 +1,65 @@
+import { describe, it, expect } from "vitest";
+import {
+  hashPassword,
+  verifyPassword,
+  generateToken,
+  hashToken,
+  validatePassword,
+} from "@/lib/auth/password";
+
+describe("password hashing + tokens", () => {
+  it("hashes and verifies a password", async () => {
+    const h = await hashPassword("Sup3rSecret!");
+    expect(h.startsWith("scrypt:")).toBe(true);
+    expect(await verifyPassword("Sup3rSecret!", h)).toBe(true);
+    expect(await verifyPassword("wrong", h)).toBe(false);
+  });
+
+  it("uses a unique salt per hash", async () => {
+    const a = await hashPassword("same");
+    const b = await hashPassword("same");
+    expect(a).not.toBe(b);
+    expect(await verifyPassword("same", a)).toBe(true);
+    expect(await verifyPassword("same", b)).toBe(true);
+  });
+
+  it("verify rejects null / malformed stored hashes", async () => {
+    expect(await verifyPassword("x", null)).toBe(false);
+    expect(await verifyPassword("x", "garbage")).toBe(false);
+    expect(await verifyPassword("x", "scrypt:onlytwo")).toBe(false);
+  });
+
+  it("reset token: raw differs from stored hash; hash is stable", () => {
+    const { token, tokenHash } = generateToken();
+    expect(token).not.toBe(tokenHash);
+    expect(hashToken(token)).toBe(tokenHash);
+    expect(token.length).toBeGreaterThanOrEqual(32);
+  });
+
+  it("validatePassword enforces minimum length", () => {
+    expect(validatePassword("short").ok).toBe(false);
+    expect(validatePassword("longenough").ok).toBe(true);
+    expect(validatePassword(123).ok).toBe(false);
+  });
+});
+
+describe("knowledge text extraction", () => {
+  it("reads TXT and MD natively", async () => {
+    const { extractText } = await import("@/lib/knowledge/extract");
+    expect(extractText("txt", Buffer.from("hello")).ok).toBe(true);
+    const md = extractText("md", Buffer.from("# hi"));
+    expect(md.ok && md.text).toBe("# hi");
+  });
+
+  it("rejects PDF/DOCX (parser not configured) and unknown types", async () => {
+    const { extractText, extFromName, isSupportedExt } = await import(
+      "@/lib/knowledge/extract"
+    );
+    expect(extractText("pdf", Buffer.from("%PDF")).ok).toBe(false);
+    expect(extractText("docx", Buffer.from("x")).ok).toBe(false);
+    expect(extractText("exe", Buffer.from("x")).ok).toBe(false);
+    expect(extFromName("a.b.TXT")).toBe("txt");
+    expect(isSupportedExt("pdf")).toBe(true);
+    expect(isSupportedExt("exe")).toBe(false);
+  });
+});

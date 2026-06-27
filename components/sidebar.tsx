@@ -1,23 +1,28 @@
 "use client";
 
-import { MessageSquare, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Folder, FolderPlus, MessageSquare, Pencil, Plus, Trash2, X } from "lucide-react";
 
 type Conv = { id: string; title: string };
+type Proj = { id: string; name: string };
 
 export default function Sidebar({
   conversations,
+  projects,
   activeId,
   onSelect,
   onNew,
+  onNewProject,
   onDelete,
   onRename,
   open,
   onClose,
 }: {
   conversations: Conv[];
+  projects: Proj[];
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onNewProject: () => void;
   onDelete: (id: string) => void;
   onRename: (id: string) => void;
   open: boolean;
@@ -55,6 +60,40 @@ export default function Sidebar({
         </div>
 
         <nav className="flex-1 overflow-y-auto overscroll-contain px-2 pb-3">
+          {/* Projects */}
+          <div className="mb-1 flex items-center justify-between px-2 pt-1">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Projects
+            </span>
+            <button
+              onClick={onNewProject}
+              aria-label="New project"
+              className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <FolderPlus className="size-4" />
+            </button>
+          </div>
+          {projects.length === 0 ? (
+            <p className="px-2 pb-2 text-xs text-muted-foreground">No projects yet</p>
+          ) : (
+            <ul className="mb-2 space-y-0.5">
+              {projects.map((p) => (
+                <li key={p.id}>
+                  <div className="flex min-h-9 items-center gap-2 rounded-lg px-2 text-sm md:hover:bg-accent/60">
+                    <Folder className="ml-1 size-4 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {/* Recent Chats */}
+          <div className="mb-1 px-2 pt-1">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Recent Chats
+            </span>
+          </div>
           {conversations.length === 0 ? (
             <div className="flex flex-col items-center gap-1 px-4 py-10 text-center">
               <MessageSquare className="size-6 text-muted-foreground/60" />

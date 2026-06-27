@@ -92,6 +92,8 @@ export const conversations = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     title: text("title").notNull().default("New chat"),
+    // Project workspace this chat belongs to (null = loose "Recent Chats").
+    projectId: text("project_id"),
     // Multi-model foundation: which model produced this conversation.
     modelId: text("modelId").notNull().default("ollama:qwen2.5"),
     // Personality foundation: which persona is active (default = Haji).
@@ -232,6 +234,8 @@ export const knowledgeDocument = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     title: text("title").notNull(),
+    // Project this document belongs to (null = user-level knowledge).
+    projectId: text("project_id"),
     sourceType: knowledgeSourceType("sourceType").notNull().default("note"),
     status: knowledgeStatus("status").notNull().default("active"),
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
@@ -383,6 +387,9 @@ export const userProfiles = pgTable(
     // Set during onboarding (null until then). Case-insensitive uniqueness is
     // enforced by a functional unique index added in the migration.
     username: text("username"),
+    // Set when a user enables username/password login (scrypt hash; nullable
+    // for Google-only users). Never store plaintext.
+    passwordHash: text("password_hash"),
     mobileNumber: text("mobile_number"),
     countryCode: text("country_code"),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
@@ -405,3 +412,89 @@ export const userProfilesRelations = relations(userProfiles, ({ one }) => ({
 
 export type UserProfile = typeof userProfiles.$inferSelect;
 export type NewUserProfile = typeof userProfiles.$inferInsert;
+
+/* ------------------------------------------------------------------ */
+/* Platform — Projects (ChatGPT-style project workspaces)              */
+/* ------------------------------------------------------------------ */
+
+export const projects = pgTable(
+  "projects",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    instructions: text("instructions"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("projects_user_idx").on(t.userId)],
+);
+
+export const projectsRelations = relations(projects, ({ one }) => ({
+  user: one(users, { fields: [projects.userId], references: [users.id] }),
+}));
+
+export type Project = typeof projects.$inferSelect;
+export type NewProject = typeof projects.$inferInsert;
+
+/* ------------------------------------------------------------------ */
+/* Platform — Username/password credentials + password reset           */
+/* ------------------------------------------------------------------ */
+
+export const passwordResetTokens = pgTable(
+  "password_reset_tokens",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // We store only a SHA-256 hash of the token; the raw token lives in the
+    // emailed link and is never persisted.
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: timestamp("expires_at", { mode: "date" }).notNull(),
+    usedAt: timestamp("used_at", { mode: "date" }),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("password_reset_user_idx").on(t.userId)],
+);
+
+export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
+
+/* ------------------------------------------------------------------ */
+/* Platform — Admin portal (database-driven; NOT env-driven)           */
+/* ------------------------------------------------------------------ */
+
+export const admins = pgTable("admins", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  username: text("username").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  // Admin id of the creator (null for the bootstrap admin).
+  createdBy: text("created_by"),
+});
+
+export type Admin = typeof admins.$inferSelect;
+
+export const adminSessions = pgTable(
+  "admin_sessions",
+  {
+    token: text("token").primaryKey(),
+    adminId: text("admin_id")
+      .notNull()
+      .references(() => admins.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { mode: "date" }).notNull(),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("admin_sessions_admin_idx").on(t.adminId)],
+);
+
+export type AdminSession = typeof adminSessions.$inferSelect;

@@ -3,11 +3,12 @@ import { isModelUsable } from "./health";
 
 /**
  * Capability levels shown to users instead of raw provider/model names.
+ * Users NEVER see Gemini / Groq / OpenRouter / Llama / DeepSeek / Qwen.
  *
- * Each level has a `primary` model (its natural tier) and a `chain` of
- * fallbacks. The UI shows a level only when its primary is usable; if a
- * picked level's primary later fails, routing remaps down the chain to the
- * next healthy model. Users never see provider names or which model ran.
+ *   LOW    — active, uses the current lowest-cost healthy model
+ *   MEDIUM — active, uses the current best healthy model
+ *   HIGH   — disabled, "Coming Soon"
+ *   MAX    — disabled, "Coming Soon"
  */
 
 export type Level = "low" | "medium" | "high" | "max";
@@ -15,8 +16,9 @@ export type Level = "low" | "medium" | "high" | "max";
 export interface LevelDef {
   level: Level;
   label: string;
-  primary: string;
-  /** Ordered fallback chain (primary first). */
+  /** false → disabled, rendered greyed-out as "Coming Soon". */
+  enabled: boolean;
+  /** Ordered routing fallback chain (empty for disabled levels). */
   chain: string[];
 }
 
@@ -24,58 +26,68 @@ export const LEVELS: LevelDef[] = [
   {
     level: "low",
     label: "Low",
-    primary: "openrouter:qwen-2.5-7b",
+    enabled: true,
+    // Lowest-cost first.
     chain: ["openrouter:qwen-2.5-7b", "groq:llama-3.3-70b", "gemini:2.0-flash"],
   },
   {
     level: "medium",
     label: "Medium",
-    primary: "groq:llama-3.3-70b",
-    chain: ["groq:llama-3.3-70b", "openrouter:qwen-2.5-7b", "gemini:2.0-flash"],
+    enabled: true,
+    // Best first.
+    chain: ["groq:llama-3.3-70b", "gemini:2.0-flash", "openrouter:qwen-2.5-7b"],
   },
-  {
-    level: "high",
-    label: "High",
-    primary: "groq:deepseek-r1-70b",
-    chain: [
-      "groq:deepseek-r1-70b",
-      "groq:qwen-qwq-32b",
-      "groq:llama-3.3-70b",
-      "openrouter:qwen-2.5-7b",
-    ],
-  },
-  {
-    level: "max",
-    label: "Max",
-    primary: "gemini:2.0-flash",
-    chain: ["gemini:2.0-flash", "groq:llama-3.3-70b", "openrouter:qwen-2.5-7b"],
-  },
+  { level: "high", label: "High", enabled: false, chain: [] },
+  { level: "max", label: "Max", enabled: false, chain: [] },
 ];
+
+export interface LevelStatus {
+  level: Level;
+  label: string;
+  enabled: boolean;
+  comingSoon: boolean;
+  /** Selectable right now (enabled AND at least one model in chain is healthy). */
+  available: boolean;
+}
 
 type Usable = (modelId: string) => boolean;
 const defaultUsable: Usable = (id) => isModelUsable(id);
-
 const has = (id: string) => MODEL_REGISTRY.some((m) => m.modelId === id);
 
-/** Levels whose primary model is currently usable (for the selector). */
-export function listHealthyLevels(
-  usable: Usable = defaultUsable,
-): { level: Level; label: string }[] {
-  return LEVELS.filter((d) => has(d.primary) && usable(d.primary)).map(
-    ({ level, label }) => ({ level, label }),
-  );
+export function isLevel(v: unknown): v is Level {
+  return v === "low" || v === "medium" || v === "high" || v === "max";
 }
 
-/** Resolve a level to the first usable model in its chain, or null. */
+export function isLevelEnabled(level: Level): boolean {
+  return LEVELS.find((l) => l.level === level)?.enabled ?? false;
+}
+
+/** All four levels with their current selectable/coming-soon status. */
+export function listLevels(usable: Usable = defaultUsable): LevelStatus[] {
+  return LEVELS.map((d) => ({
+    level: d.level,
+    label: d.label,
+    enabled: d.enabled,
+    comingSoon: !d.enabled,
+    available: d.enabled && d.chain.some((id) => has(id) && usable(id)),
+  }));
+}
+
+/** Resolve an enabled level to the first usable model in its chain, or null. */
 export function resolveLevel(level: Level, usable: Usable = defaultUsable): string | null {
   const def = LEVELS.find((l) => l.level === level);
-  if (!def) return null;
+  if (!def || !def.enabled) return null;
   for (const id of def.chain) {
     if (has(id) && usable(id)) return id;
   }
   return null;
 }
 
-export function isLevel(v: unknown): v is Level {
-  return v === "low" || v === "medium" || v === "high" || v === "max";
+/** The default level to preselect: prefer Medium, else Low, else null. */
+export function defaultLevel(usable: Usable = defaultUsable): Level | null {
+  const statuses = listLevels(usable);
+  const medium = statuses.find((s) => s.level === "medium" && s.available);
+  if (medium) return "medium";
+  const low = statuses.find((s) => s.level === "low" && s.available);
+  return low ? "low" : null;
 }
