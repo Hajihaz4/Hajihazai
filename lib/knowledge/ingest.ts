@@ -19,6 +19,7 @@ export async function ingestDocument(
     filename: string;
     buffer: Buffer;
     projectId?: string | null;
+    brainId?: string | null;
     title?: string;
   },
 ): Promise<
@@ -41,6 +42,7 @@ export async function ingestDocument(
     title: input.title?.trim() || input.filename,
     sourceType: ext === "pdf" ? "pdf" : "text",
     projectId: input.projectId ?? null,
+    brainId: input.brainId ?? null,
   });
 
   await createContent(userId, doc.id, text);
@@ -69,6 +71,7 @@ export async function ingestText(
     content: string;
     projectId?: string | null;
     category?: string | null;
+    brainId?: string | null;
   },
 ): Promise<
   | { ok: true; documentId: string; chunks: number }
@@ -85,6 +88,7 @@ export async function ingestText(
     sourceType: "note",
     projectId: input.projectId ?? null,
     category: input.category ?? null,
+    brainId: input.brainId ?? null,
   });
 
   await createContent(userId, doc.id, text);

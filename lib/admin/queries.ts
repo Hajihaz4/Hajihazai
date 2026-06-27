@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { count, desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   admins,
@@ -6,6 +6,11 @@ import {
   userProfiles,
   projects,
   knowledgeDocument,
+  knowledgeChunk,
+  conversations,
+  messages,
+  userMemory,
+  brains,
   type Admin,
 } from "@/lib/db/schema";
 import { isUniqueViolation } from "@/lib/db/credential-queries";
@@ -170,4 +175,72 @@ export async function adminListProjectsForPicker() {
     })
     .from(projects)
     .orderBy(projects.name);
+}
+
+/* ----------------------------- analytics ------------------------------- */
+
+export interface AdminAnalytics {
+  totalUsers: number;
+  totalConversations: number;
+  totalMessages: number;
+  totalDocuments: number;
+  totalChunks: number;
+  totalBrains: number;
+  totalMemories: number;
+}
+
+export async function getAdminAnalytics(): Promise<AdminAnalytics> {
+  const [
+    [{ cnt: totalUsers }],
+    [{ cnt: totalConversations }],
+    [{ cnt: totalMessages }],
+    [{ cnt: totalDocuments }],
+    [{ cnt: totalChunks }],
+    [{ cnt: totalBrains }],
+    [{ cnt: totalMemories }],
+  ] = await Promise.all([
+    db.select({ cnt: count() }).from(users),
+    db.select({ cnt: count() }).from(conversations),
+    db.select({ cnt: count() }).from(messages),
+    db.select({ cnt: count() }).from(knowledgeDocument),
+    db.select({ cnt: count() }).from(knowledgeChunk),
+    db.select({ cnt: count() }).from(brains),
+    db.select({ cnt: count() }).from(userMemory),
+  ]);
+
+  return {
+    totalUsers: Number(totalUsers),
+    totalConversations: Number(totalConversations),
+    totalMessages: Number(totalMessages),
+    totalDocuments: Number(totalDocuments),
+    totalChunks: Number(totalChunks),
+    totalBrains: Number(totalBrains),
+    totalMemories: Number(totalMemories),
+  };
+}
+
+/* ----------------------------- brain admin ----------------------------- */
+
+export async function adminListKnowledgeWithBrain() {
+  return db
+    .select({
+      id: knowledgeDocument.id,
+      title: knowledgeDocument.title,
+      category: knowledgeDocument.category,
+      sourceType: knowledgeDocument.sourceType,
+      status: knowledgeDocument.status,
+      projectId: knowledgeDocument.projectId,
+      projectName: projects.name,
+      brainId: knowledgeDocument.brainId,
+      brainName: brains.name,
+      brainIcon: brains.icon,
+      userId: knowledgeDocument.userId,
+      userEmail: users.email,
+      createdAt: knowledgeDocument.createdAt,
+    })
+    .from(knowledgeDocument)
+    .leftJoin(projects, eq(projects.id, knowledgeDocument.projectId))
+    .leftJoin(brains, eq(brains.id, knowledgeDocument.brainId))
+    .leftJoin(users, eq(users.id, knowledgeDocument.userId))
+    .orderBy(desc(knowledgeDocument.createdAt));
 }

@@ -37,7 +37,7 @@ export async function PATCH(
   const sess = await requireAdmin();
   if (!sess) return new Response("Unauthorized", { status: 401 });
   const { id } = await params;
-  const { title, category, content } = await req.json();
+  const { title, category, brainId, content } = await req.json();
 
   const [doc] = await db
     .select()
@@ -51,6 +51,7 @@ export async function PATCH(
     .set({
       ...(title?.trim() ? { title: title.trim() } : {}),
       category: category || null,
+      brainId: brainId || null,
       updatedAt: new Date(),
     })
     .where(eq(knowledgeDocument.id, id));

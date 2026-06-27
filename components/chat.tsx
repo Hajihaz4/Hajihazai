@@ -3,6 +3,8 @@
 import { useEffect, useRef } from "react";
 import { Copy, RotateCw, Send, Trash2 } from "lucide-react";
 import type { Msg } from "./chat-app";
+import BrainSelector, { type BrainOption, type BrainMode } from "./brain-selector";
+import { ProfileCard, isProfileCardQuery, DEFAULT_PROFILE } from "./profile-card";
 
 export default function Chat({
   messages,
@@ -16,6 +18,11 @@ export default function Chat({
   loading,
   isAdmin,
   debug,
+  brains,
+  selectedBrainId,
+  brainMode,
+  onSelectBrain,
+  onToggleBrainMode,
 }: {
   messages: Msg[];
   input: string;
@@ -28,6 +35,11 @@ export default function Chat({
   loading: boolean;
   isAdmin: boolean;
   debug: boolean;
+  brains: BrainOption[];
+  selectedBrainId: string | null;
+  brainMode: BrainMode;
+  onSelectBrain: (id: string | null) => void;
+  onToggleBrainMode: () => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -55,8 +67,15 @@ export default function Chat({
               aria-live="polite"
               aria-relevant="additions"
             >
-              {messages.map((m) => {
+              {messages.map((m, idx) => {
                 const isUser = m.role === "user";
+                // Show profile card below the first assistant reply to a profile query.
+                const prevMsg = messages[idx - 1];
+                const showProfileCard =
+                  !isUser &&
+                  prevMsg?.role === "user" &&
+                  isProfileCardQuery(prevMsg.content);
+
                 return (
                   <div
                     key={m.id}
@@ -112,6 +131,11 @@ export default function Chat({
                       {isAdmin && debug && m.role === "assistant" && m.meta ? (
                         <DebugPanel meta={m.meta} />
                       ) : null}
+
+                      {/* Profile card — shown for profile queries */}
+                      {showProfileCard && (
+                        <ProfileCard data={DEFAULT_PROFILE} />
+                      )}
                     </div>
                   </div>
                 );
@@ -133,7 +157,21 @@ export default function Chat({
         </div>
       </div>
 
-      <div className="border-t p-3 pb-safe sm:p-4">
+      <div className="border-t">
+        {/* Brain selector — above the text input */}
+        {brains.length > 0 && (
+          <div className="border-b px-1">
+            <BrainSelector
+              brains={brains}
+              selectedBrainId={selectedBrainId}
+              brainMode={brainMode}
+              onSelectBrain={onSelectBrain}
+              onToggleMode={onToggleBrainMode}
+            />
+          </div>
+        )}
+
+        <div className="p-3 pb-safe sm:p-4">
         <div className="mx-auto flex max-w-3xl items-end gap-2">
           <textarea
             value={input}
@@ -158,6 +196,7 @@ export default function Chat({
           >
             <Send className="size-4" />
           </button>
+        </div>
         </div>
       </div>
     </div>
@@ -205,6 +244,11 @@ function DebugPanel({ meta }: { meta: NonNullable<Msg["meta"]> }) {
       {meta.fallbackFrom ? (
         <div className="text-amber-600">
           fallback: {meta.fallbackFrom} → {meta.model} (attempts {meta.attempts ?? "—"})
+        </div>
+      ) : null}
+      {meta.brainSlug || meta.brainId ? (
+        <div className="text-violet-500">
+          brain: {meta.brainSlug ?? meta.brainId} · mode: {meta.brainMode ?? "manual"}
         </div>
       ) : null}
     </div>

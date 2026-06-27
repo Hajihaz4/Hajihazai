@@ -12,6 +12,8 @@ import { resolveLevel, isLevel, isLevelEnabled } from "@/lib/ai/levels";
 import { isModelUsable } from "@/lib/ai/health";
 import { isAdmin } from "@/lib/auth/admin";
 import { rateLimitResponse } from "@/lib/ratelimit";
+import { routeToBrain, type BrainMode } from "@/lib/ai/brain-router";
+import { getBrainBySlug } from "@/lib/db/brain-queries";
 
 // Chat makes 1–2 LLM calls per turn — throttle per user (same mechanism as tools).
 const CHAT_RATE_LIMIT = 30;
@@ -46,7 +48,7 @@ export async function POST(req: Request) {
   );
   if (limited) return limited;
 
-  const { conversationId, message, modelId, level, regenerate } = await req.json();
+  const { conversationId, message, modelId, level, regenerate, brainId: clientBrainId, brainMode } = await req.json();
   if (!conversationId || typeof message !== "string" || !message.trim()) {
     return new Response("Bad request", { status: 400 });
   }
@@ -103,11 +105,26 @@ export async function POST(req: Request) {
     memory = { block: "", memories: [], count: 0, fallbackUsed: false };
   }
 
+  // Resolve brainId: smart mode auto-routes; manual uses the client selection.
+  let resolvedBrainId: string | null = null;
+  let resolvedBrainSlug: string | null = null;
+  const effectiveBrainMode: BrainMode =
+    brainMode === "smart" ? "smart" : "manual";
+
+  if (effectiveBrainMode === "smart") {
+    resolvedBrainSlug = routeToBrain(message);
+    const brain = await getBrainBySlug(resolvedBrainSlug).catch(() => null);
+    resolvedBrainId = brain?.id ?? null;
+  } else if (clientBrainId && typeof clientBrainId === "string") {
+    resolvedBrainId = clientBrainId;
+  }
+
   let knowledge: Awaited<ReturnType<typeof buildKnowledgeContext>>;
   try {
     knowledge = await buildKnowledgeContext(session.user.id, {
       query: message,
       projectId,
+      brainId: resolvedBrainId ?? undefined,
     });
   } catch (err) {
     console.warn("[chat] knowledge context failed — continuing with empty context:", err);
@@ -190,6 +207,9 @@ export async function POST(req: Request) {
             attempts: result.attempts ?? null,
             latencyMs: result.latencyMs ?? null,
             usage: result.usage ?? null,
+            brainId: resolvedBrainId,
+            brainSlug: resolvedBrainSlug,
+            brainMode: effectiveBrainMode,
           },
         }
       : {}),

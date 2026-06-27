@@ -6,6 +6,7 @@ import Sidebar from "./sidebar";
 import Chat from "./chat";
 import Modal from "./modal";
 import ProfileMenu from "./profile-menu";
+import type { BrainOption, BrainMode } from "./brain-selector";
 
 type Conv = { id: string; title: string };
 type Proj = { id: string; name: string; isSystem?: boolean };
@@ -29,6 +30,9 @@ export type MsgMeta = {
     totalTokens?: number;
     approx?: boolean;
   } | null;
+  brainId?: string | null;
+  brainSlug?: string | null;
+  brainMode?: string | null;
 };
 export type Msg = {
   id: string;
@@ -78,6 +82,11 @@ export default function ChatApp({
   );
   const [debug, setDebug] = useState(false);
 
+  // Brain system state
+  const [brains, setBrains] = useState<BrainOption[]>([]);
+  const [selectedBrainId, setSelectedBrainId] = useState<string | null>(null);
+  const [brainMode, setBrainMode] = useState<BrainMode>("manual");
+
   // Conversation management modals.
   const [pendingDelete, setPendingDelete] = useState<Conv | null>(null);
   const [renaming, setRenaming] = useState<Conv | null>(null);
@@ -97,8 +106,28 @@ export default function ChatApp({
     if (activeId) void openConversation(activeId);
     void refreshLevels();
     void loadProjects();
+    void loadBrains();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function loadBrains() {
+    try {
+      const res = await fetch("/api/brains");
+      if (!res.ok) return;
+      const data = await res.json();
+      const loaded: BrainOption[] = (data.brains ?? []).map(
+        (b: { id: string; name: string; slug: string; icon: string; color: string }) => ({
+          id: b.id, name: b.name, slug: b.slug, icon: b.icon, color: b.color,
+        }),
+      );
+      setBrains(loaded);
+      // Auto-select Haji Core as the default brain.
+      const hajiCore = loaded.find((b) => b.slug === "haji-core");
+      if (hajiCore && !selectedBrainId) setSelectedBrainId(hajiCore.id);
+    } catch {
+      /* best-effort */
+    }
+  }
 
   async function loadProjects() {
     try {
@@ -293,6 +322,8 @@ export default function ChatApp({
             message: text,
             level,
             regenerate: opts.regenerate ?? false,
+            brainId: brainMode === "manual" ? selectedBrainId : null,
+            brainMode,
           }),
           signal: controller.signal,
         });
@@ -351,6 +382,7 @@ export default function ChatApp({
       <Sidebar
         conversations={conversations}
         projects={projects}
+        brains={brains}
         activeId={activeId}
         onSelect={openConversation}
         onNew={newChat}
@@ -448,6 +480,11 @@ export default function ChatApp({
           loading={loading}
           isAdmin={isAdmin}
           debug={debug}
+          brains={brains}
+          selectedBrainId={selectedBrainId}
+          brainMode={brainMode}
+          onSelectBrain={setSelectedBrainId}
+          onToggleBrainMode={() => setBrainMode((m) => m === "manual" ? "smart" : "manual")}
         />
       </div>
 

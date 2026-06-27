@@ -1,11 +1,16 @@
 import { requireAdmin } from "@/lib/admin/session";
-import { adminListKnowledge } from "@/lib/admin/queries";
+import { adminListKnowledge, adminListKnowledgeWithBrain } from "@/lib/admin/queries";
 import { ingestText } from "@/lib/knowledge/ingest";
 
-export async function GET() {
+export async function GET(req: Request) {
   const sess = await requireAdmin();
   if (!sess) return new Response("Unauthorized", { status: 401 });
-  const knowledge = await adminListKnowledge();
+
+  const url = new URL(req.url);
+  const withBrain = url.searchParams.get("withBrain") === "1";
+  const knowledge = withBrain
+    ? await adminListKnowledgeWithBrain()
+    : await adminListKnowledge();
   return Response.json({ knowledge });
 }
 
@@ -13,7 +18,7 @@ export async function POST(req: Request) {
   const sess = await requireAdmin();
   if (!sess) return new Response("Unauthorized", { status: 401 });
 
-  const { userId, projectId, title, category, content } = await req.json();
+  const { userId, projectId, brainId, title, category, content } = await req.json();
 
   if (!userId || typeof userId !== "string") {
     return Response.json({ error: "userId is required" }, { status: 400 });
@@ -30,6 +35,7 @@ export async function POST(req: Request) {
     content: content.trim(),
     projectId: projectId || null,
     category: category || null,
+    brainId: brainId || null,
   });
 
   if (!result.ok) {

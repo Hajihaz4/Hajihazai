@@ -2,7 +2,7 @@ import { and, cosineDistance, desc, eq, gt, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { knowledgeChunk, knowledgeDocument } from "@/lib/db/schema";
 import { embed } from "@/lib/ai/embeddings/router";
-import { projectScope } from "./scope";
+import { projectScope, brainScope } from "./scope";
 
 /**
  * Standalone semantic search over knowledge-base chunk embeddings.
@@ -27,7 +27,7 @@ export async function semanticDocumentSearch(
   query: string,
   limit = 10,
   threshold = DEFAULT_DOC_SIMILARITY_THRESHOLD,
-  opts: { projectId?: string | null } = {},
+  opts: { projectId?: string | null; brainId?: string | null } = {},
 ): Promise<DocumentSearchHit[]> {
   if (!query || !query.trim()) return [];
 
@@ -54,6 +54,7 @@ export async function semanticDocumentSearch(
         eq(knowledgeDocument.userId, userId), // ownership
         eq(knowledgeDocument.status, "active"), // active documents only
         projectScope(opts.projectId), // project isolation
+        brainScope(opts.brainId), // brain isolation
         isNotNull(knowledgeChunk.embedding),
         gt(similarity, threshold), // similarity threshold
       ),

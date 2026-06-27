@@ -140,6 +140,7 @@ async function searchScope(
   userId: string,
   query: string,
   projectId: string | null | undefined,
+  brainId?: string | null,
 ): Promise<DocumentSearchHit[]> {
   const [semanticHits, keywordHits] = await Promise.all([
     semanticDocumentSearch(
@@ -147,13 +148,14 @@ async function searchScope(
       query,
       KNOWLEDGE_LIMIT,
       DEFAULT_DOC_SIMILARITY_THRESHOLD,
-      { projectId },
+      { projectId, brainId },
     ).catch((err) => {
       console.warn("[knowledge] semantic search error:", err);
       return [] as DocumentSearchHit[];
     }),
     keywordDocumentSearch(userId, query, {
       projectId,
+      brainId,
       limit: KNOWLEDGE_LIMIT,
     }),
   ]);
@@ -187,13 +189,13 @@ async function searchScope(
  */
 export async function buildKnowledgeContext(
   userId: string,
-  opts: { query?: string; maxChars?: number; projectId?: string | null } = {},
+  opts: { query?: string; maxChars?: number; projectId?: string | null; brainId?: string | null } = {},
 ): Promise<KnowledgeContext> {
   const query = opts.query?.trim();
   if (!query) return { block: "", chunks: [], count: 0 };
 
   // Primary scope: the conversation's own project (or user-level if null).
-  const primaryHits = await searchScope(userId, query, opts.projectId);
+  const primaryHits = await searchScope(userId, query, opts.projectId, opts.brainId);
 
   // Always include system project knowledge (e.g. Haji Core) globally.
   const systemProjects = await listSystemProjects(userId);
@@ -201,7 +203,7 @@ export async function buildKnowledgeContext(
   const allHits: DocumentSearchHit[] = [...primaryHits];
   for (const sp of systemProjects) {
     if (sp.id === opts.projectId) continue; // already included above
-    const sysHits = await searchScope(userId, query, sp.id);
+    const sysHits = await searchScope(userId, query, sp.id, opts.brainId);
     for (const h of sysHits) {
       if (!seen.has(h.chunkId)) {
         seen.add(h.chunkId);

@@ -1,7 +1,7 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { knowledgeChunk, knowledgeDocument } from "@/lib/db/schema";
-import { projectScope } from "./scope";
+import { projectScope, brainScope } from "./scope";
 import type { DocumentSearchHit } from "./semantic-search";
 
 /**
@@ -33,7 +33,7 @@ export function tokenize(query: string): string[] {
 export async function keywordDocumentSearch(
   userId: string,
   query: string,
-  opts: { projectId?: string | null; limit?: number } = {},
+  opts: { projectId?: string | null; brainId?: string | null; limit?: number } = {},
 ): Promise<DocumentSearchHit[]> {
   const terms = tokenize(query);
   if (terms.length === 0) return [];
@@ -69,6 +69,7 @@ export async function keywordDocumentSearch(
         eq(knowledgeDocument.userId, userId),
         eq(knowledgeDocument.status, "active"),
         projectScope(opts.projectId),
+        brainScope(opts.brainId),
         anyMatch,
       ),
     )

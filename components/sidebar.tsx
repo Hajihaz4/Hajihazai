@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Brain,
   ChevronRight,
@@ -15,10 +15,39 @@ import {
 
 type Conv = { id: string; title: string };
 type Proj = { id: string; name: string; isSystem?: boolean };
+type BrainEntry = { id: string; name: string; slug: string; icon: string; color: string };
+
+const SECTION_KEYS = ["projects", "brains", "recent"] as const;
+type SectionKey = (typeof SECTION_KEYS)[number];
+
+function useSectionCollapse() {
+  const STORAGE_KEY = "sidebar_collapsed";
+  const [collapsed, setCollapsed] = useState<Set<SectionKey>>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? new Set(JSON.parse(raw) as SectionKey[]) : new Set<SectionKey>();
+    } catch {
+      return new Set<SectionKey>();
+    }
+  });
+
+  function toggle(key: SectionKey) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...next])); } catch { /**/ }
+      return next;
+    });
+  }
+
+  return { collapsed, toggle };
+}
 
 export default function Sidebar({
   conversations,
   projects,
+  brains,
   activeId,
   onSelect,
   onNew,
@@ -30,6 +59,7 @@ export default function Sidebar({
 }: {
   conversations: Conv[];
   projects: Proj[];
+  brains?: BrainEntry[];
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
@@ -42,6 +72,7 @@ export default function Sidebar({
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [projectChats, setProjectChats] = useState<Record<string, Conv[]>>({});
   const [loadingProj, setLoadingProj] = useState<string | null>(null);
+  const { collapsed, toggle: toggleSection } = useSectionCollapse();
 
   async function toggleProject(id: string) {
     if (expanded.has(id)) {
@@ -108,9 +139,13 @@ export default function Sidebar({
         <nav className="flex-1 overflow-y-auto overscroll-contain px-2 pb-3">
           {/* Projects */}
           <div className="mb-1 flex items-center justify-between px-2 pt-1">
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <button
+              onClick={() => toggleSection("projects")}
+              className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground"
+            >
+              <ChevronRight className={`size-3 transition-transform ${collapsed.has("projects") ? "" : "rotate-90"}`} />
               Projects
-            </span>
+            </button>
             <button
               onClick={onNewProject}
               aria-label="New project"
@@ -120,9 +155,9 @@ export default function Sidebar({
             </button>
           </div>
 
-          {sorted.length === 0 ? (
+          {!collapsed.has("projects") && sorted.length === 0 ? (
             <p className="px-2 pb-2 text-xs text-muted-foreground">No projects yet</p>
-          ) : (
+          ) : !collapsed.has("projects") ? (
             <ul className="mb-2 space-y-0.5">
               {sorted.map((p) => {
                 const isOpen = expanded.has(p.id);
@@ -189,15 +224,49 @@ export default function Sidebar({
                 );
               })}
             </ul>
+          ) : null}
+
+          {/* Brains */}
+          {brains && brains.length > 0 && (
+            <>
+              <div className="mb-1 flex items-center px-2 pt-1">
+                <button
+                  onClick={() => toggleSection("brains")}
+                  className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground"
+                >
+                  <ChevronRight className={`size-3 transition-transform ${collapsed.has("brains") ? "" : "rotate-90"}`} />
+                  Brains
+                </button>
+              </div>
+              {!collapsed.has("brains") && (
+                <ul className="mb-2 space-y-0.5">
+                  {brains.map((b) => (
+                    <li key={b.id}>
+                      <a
+                        href={`/?brain=${b.slug}`}
+                        className="flex min-h-9 items-center gap-2 rounded-lg px-3 text-sm active:bg-accent/60 md:hover:bg-accent/60"
+                      >
+                        <span className="text-base leading-none">{b.icon}</span>
+                        <span className="min-w-0 flex-1 truncate">{b.name}</span>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
           )}
 
           {/* Recent Chats */}
-          <div className="mb-1 px-2 pt-1">
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <div className="mb-1 flex items-center px-2 pt-1">
+            <button
+              onClick={() => toggleSection("recent")}
+              className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground"
+            >
+              <ChevronRight className={`size-3 transition-transform ${collapsed.has("recent") ? "" : "rotate-90"}`} />
               Recent Chats
-            </span>
+            </button>
           </div>
-          {conversations.length === 0 ? (
+          {!collapsed.has("recent") && conversations.length === 0 ? (
             <div className="flex flex-col items-center gap-1 px-4 py-10 text-center">
               <MessageSquare className="size-6 text-muted-foreground/60" />
               <p className="text-sm font-medium">No conversations yet</p>
@@ -205,7 +274,7 @@ export default function Sidebar({
                 Tap "New Chat" to start your first conversation.
               </p>
             </div>
-          ) : (
+          ) : !collapsed.has("recent") ? (
             <ul className="space-y-1">
               {conversations.map((c) => (
                 <li key={c.id}>
@@ -243,7 +312,7 @@ export default function Sidebar({
                 </li>
               ))}
             </ul>
-          )}
+          ) : null}
         </nav>
       </aside>
     </>

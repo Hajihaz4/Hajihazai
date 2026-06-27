@@ -38,6 +38,7 @@ export async function createDocument(
     status?: DocStatus;
     projectId?: string | null;
     category?: string | null;
+    brainId?: string | null;
   },
 ) {
   const [row] = await db
@@ -47,6 +48,7 @@ export async function createDocument(
       title: input.title,
       projectId: input.projectId ?? null,
       category: input.category ?? null,
+      brainId: input.brainId ?? null,
       ...(input.sourceType ? { sourceType: input.sourceType } : {}),
       ...(input.status ? { status: input.status } : {}),
     })

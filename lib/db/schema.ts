@@ -178,7 +178,11 @@ export const userMemory = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     type: text("type").notNull().default("note"),
+    // Optional human-readable title (Brain Sprint: richer memory management).
+    title: text("title"),
     content: text("content").notNull(),
+    // Importance score 1-5 (5 = most important). Null = unrated.
+    importance: integer("importance"),
     // Phase 5 Step 2: extracted memories land as 'pending' until approved.
     status: memoryStatus("status").notNull().default("active"),
     // Phase 6.1: pgvector embedding (nullable until embedded). 768 = canonical.
@@ -238,6 +242,8 @@ export const knowledgeDocument = pgTable(
     category: text("category"),
     // Project this document belongs to (null = user-level knowledge).
     projectId: text("project_id"),
+    // Brain this document belongs to (null = visible in all brains).
+    brainId: text("brain_id").references(() => brains.id, { onDelete: "set null" }),
     sourceType: knowledgeSourceType("sourceType").notNull().default("note"),
     status: knowledgeStatus("status").notNull().default("active"),
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
@@ -503,3 +509,29 @@ export const adminSessions = pgTable(
 );
 
 export type AdminSession = typeof adminSessions.$inferSelect;
+
+/* ------------------------------------------------------------------ */
+/* Brain System (Phase 1)                                              */
+/* Global knowledge domains managed by admin; users select per-chat.  */
+/* ------------------------------------------------------------------ */
+
+export const brains = pgTable(
+  "brains",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    name: text("name").notNull(),
+    slug: text("slug").notNull().unique(),
+    description: text("description"),
+    icon: text("icon").notNull().default("🧠"),
+    color: text("color").notNull().default("#6366f1"),
+    isSystem: boolean("is_system").notNull().default(false),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("brains_slug_idx").on(t.slug)],
+);
+
+export type Brain = typeof brains.$inferSelect;
+export type NewBrain = typeof brains.$inferInsert;

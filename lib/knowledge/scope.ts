@@ -2,6 +2,23 @@ import { eq, isNull, or, type SQL } from "drizzle-orm";
 import { knowledgeDocument } from "@/lib/db/schema";
 
 /**
+ * Brain retrieval scope:
+ *   undefined → no brain filter (all docs visible regardless of brain)
+ *   null      → only docs with no brain assigned (brain_id IS NULL)
+ *   string    → docs in that brain PLUS docs with no brain assigned
+ *
+ * Documents with brain_id IS NULL are "global" — visible in all brain contexts.
+ */
+export function brainScope(brainId: string | null | undefined): SQL | undefined {
+  if (brainId === undefined) return undefined;
+  if (brainId === null) return isNull(knowledgeDocument.brainId);
+  return or(
+    eq(knowledgeDocument.brainId, brainId),
+    isNull(knowledgeDocument.brainId),
+  ) as SQL;
+}
+
+/**
  * Knowledge retrieval scope:
  *   undefined → no project filter (all the user's documents)
  *   null      → user-level documents only (project_id IS NULL)
