@@ -46,6 +46,11 @@ const BRAIN_RULES: Array<{
       "study", "studies", "college", "university", "goal", "goals", "friend",
       "friends", "hobby", "hobbies", "birthday", "born", "home", "religion",
       "identity", "life", "relationship", "girlfriend",
+      // family members
+      "safina", "safina thangam", "hamza", "sahabuddin", "hidhayaa",
+      "shehnaz", "hussain sahib", "kabeer", "family tree", "sister",
+      "aunt", "cousin", "uncle", "grandfather", "grandmother",
+      "paternal", "maternal", "relative",
     ],
     weight: 1,
   },
