@@ -127,6 +127,57 @@ export async function routeChat(
   };
 }
 
+export interface StreamChatResult {
+  stream: AsyncIterable<string>;
+  modelId: string;
+  provider: ProviderName;
+  requestedModelId: string | null;
+}
+
+/**
+ * Like routeChat but streams tokens as they arrive. Falls back to routeChat
+ * (full response as one chunk) when no provider supports generateStream.
+ */
+export async function routeChatStream(
+  messages: ChatMessage[],
+  opts: { preferredModelId?: string } = {},
+): Promise<StreamChatResult> {
+  const available: Record<ProviderName, boolean> = {
+    ollama: providers.ollama.isAvailable(),
+    gemini: providers.gemini.isAvailable(),
+    openrouter: providers.openrouter.isAvailable(),
+    groq: providers.groq.isAvailable(),
+  };
+
+  const chain = planRoute({
+    preferredModelId: opts.preferredModelId,
+    isProd: process.env.NODE_ENV === "production",
+    available,
+  });
+
+  const requestedModelId = chain[0]?.modelId ?? opts.preferredModelId ?? null;
+
+  for (const entry of chain) {
+    const provider = providers[entry.provider];
+    if (typeof provider.generateStream !== "function") continue;
+    return {
+      stream: provider.generateStream(entry.model, messages),
+      modelId: entry.model,
+      provider: entry.provider,
+      requestedModelId,
+    };
+  }
+
+  // No streaming provider available: fall back to full non-streaming, yield once.
+  const result = await routeChat(messages, opts);
+  return {
+    stream: (async function* () { yield result.text; })(),
+    modelId: result.modelId,
+    provider: result.provider,
+    requestedModelId,
+  };
+}
+
 /**
  * Native function calling across the routed chain. Uses the first available
  * provider that supports tools. Returns empty toolCalls if none can.

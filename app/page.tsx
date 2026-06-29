@@ -96,7 +96,11 @@ export default async function Home({
   }
 
   const rows = await listConversations(session.user.id);
-  const conversations = rows.map((c) => ({ id: c.id, title: c.title }));
+  const conversations = rows.map((c) => ({
+    id: c.id,
+    title: c.title,
+    updatedAt: c.updatedAt?.toISOString() ?? null,
+  }));
 
   // Capability levels (Low/Medium active, High/Max "Coming Soon"). The client
   // refines availability via GET /api/models, which runs live health probes.

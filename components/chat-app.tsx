@@ -8,7 +8,7 @@ import Modal from "./modal";
 import ProfileMenu from "./profile-menu";
 import type { BrainOption, BrainMode } from "./brain-selector";
 
-type Conv = { id: string; title: string };
+type Conv = { id: string; title: string; updatedAt?: string | null };
 type Proj = { id: string; name: string; isSystem?: boolean };
 type LevelOption = {
   level: string;
@@ -42,6 +42,7 @@ export type Msg = {
   error?: boolean;
   retryText?: string;
   meta?: MsgMeta | null;
+  streaming?: boolean;
 };
 type User = { name?: string | null; email?: string | null; image?: string | null };
 
@@ -77,10 +78,20 @@ export default function ChatApp({
   const [projects, setProjects] = useState<Proj[]>([]);
 
   const [levels, setLevels] = useState<LevelOption[]>(initialLevels);
-  const [level, setLevel] = useState<string>(
-    initialLevels.find((l) => l.available)?.level ?? "medium",
-  );
+  const [level, setLevel] = useState<string>(() => {
+    // Restore persisted level; fall back to first available from server.
+    try {
+      const saved = typeof localStorage !== "undefined" && localStorage.getItem("hh-level");
+      if (saved && initialLevels.some((l) => l.level === saved && l.available)) return saved;
+    } catch { /* ignore */ }
+    return initialLevels.find((l) => l.available)?.level ?? "medium";
+  });
   const [debug, setDebug] = useState(false);
+
+  function changeLevel(newLevel: string) {
+    setLevel(newLevel);
+    try { localStorage.setItem("hh-level", newLevel); } catch { /* ignore */ }
+  }
 
   // Brain system state
   const [brains, setBrains] = useState<BrainOption[]>([]);
@@ -301,11 +312,14 @@ export default function ChatApp({
     setSending(true);
 
     let convId = activeId;
+    const streamMsgId = uuid();
+    let addedStreamMsg = false;
+
     try {
       if (!convId) {
         const res = await fetch("/api/conversations", { method: "POST" });
-        const convo: Conv = await res.json();
-        setConversations((p) => [convo, ...p]);
+        const convo = await res.json();
+        setConversations((p) => [{ id: convo.id, title: convo.title }, ...p]);
         convId = convo.id;
         setActiveId(convId);
       }
@@ -331,32 +345,72 @@ export default function ChatApp({
         clearTimeout(timer);
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      if (!res.body) throw new Error("No response body");
 
-      // Patch the just-sent user message with its persisted id (for delete).
-      if (opts.userLocalId && data.userMessageId) {
-        setMessages((p) =>
-          p.map((m) =>
-            m.id === opts.userLocalId ? { ...m, dbId: data.userMessageId } : m,
-          ),
-        );
-      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
 
-      setMessages((p) => [
-        ...p,
-        {
-          id: data.assistantMessageId ?? uuid(),
-          dbId: data.assistantMessageId ?? null,
-          role: "assistant",
-          content: data.response ?? "",
-          meta: data.meta ?? null,
-        },
-      ]);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split("\n\n");
+        buf = parts.pop() ?? "";
 
-      if (data.title) {
-        setConversations((p) =>
-          p.map((c) => (c.id === convId ? { ...c, title: data.title } : c)),
-        );
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+
+            if (event.t === "chunk") {
+              if (!addedStreamMsg) {
+                // First token: hide dots, show assistant message
+                setSending(false);
+                setMessages((p) => [
+                  ...p,
+                  { id: streamMsgId, role: "assistant" as const, content: event.text, streaming: true },
+                ]);
+                addedStreamMsg = true;
+              } else {
+                setMessages((p) =>
+                  p.map((m) =>
+                    m.id === streamMsgId ? { ...m, content: m.content + event.text } : m,
+                  ),
+                );
+              }
+            } else if (event.t === "done") {
+              // Patch user message with DB id.
+              if (opts.userLocalId && event.userMessageId) {
+                setMessages((p) =>
+                  p.map((m) =>
+                    m.id === opts.userLocalId ? { ...m, dbId: event.userMessageId } : m,
+                  ),
+                );
+              }
+              // Finalize assistant message.
+              setMessages((p) =>
+                p.map((m) =>
+                  m.id === streamMsgId
+                    ? { ...m, dbId: event.assistantMessageId ?? null, meta: event.meta ?? null, streaming: false }
+                    : m,
+                ),
+              );
+              if (event.title && convId) {
+                setConversations((p) =>
+                  p.map((c) => (c.id === convId ? { ...c, title: event.title } : c)),
+                );
+              }
+            } else if (event.t === "error") {
+              setSending(false);
+              setMessages((p) => [
+                ...p,
+                { id: uuid(), role: "assistant" as const, content: "⚠️ Something went wrong. Please try again.", error: true, retryText: text },
+              ]);
+            }
+          } catch { /* skip malformed SSE event */ }
+        }
       }
     } catch (err) {
       const aborted = (err as { name?: string })?.name === "AbortError";
@@ -374,6 +428,12 @@ export default function ChatApp({
       ]);
     } finally {
       setSending(false);
+      // If stream ended without completing (mid-stream error), clear cursor.
+      if (addedStreamMsg) {
+        setMessages((p) =>
+          p.map((m) => (m.id === streamMsgId && m.streaming ? { ...m, streaming: false } : m)),
+        );
+      }
     }
   }
 
@@ -453,7 +513,7 @@ export default function ChatApp({
             <select
               id="level-select"
               value={level}
-              onChange={(e) => setLevel(e.target.value)}
+              onChange={(e) => changeLevel(e.target.value)}
               className="min-w-0 rounded-lg border bg-background px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-ring sm:px-3 sm:py-1.5"
             >
               {levels.map((l) => (

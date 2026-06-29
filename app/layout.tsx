@@ -10,7 +10,6 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  // Cover the notch / safe areas; do NOT disable user zoom (accessibility).
   viewportFit: "cover",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#ffffff" },
@@ -18,11 +17,19 @@ export const viewport: Viewport = {
   ],
 };
 
+// Inline script runs before React hydration — reads localStorage and sets
+// the .dark class immediately so there's no flash of wrong theme.
+const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem('hh-theme')||'system';if(t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme:dark)').matches)){document.documentElement.classList.add('dark')}}catch(e){}})();`;
+
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      {/* eslint-disable-next-line @next/next/no-sync-scripts */}
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
       <body className="min-h-dvh overflow-x-hidden antialiased">{children}</body>
     </html>
   );

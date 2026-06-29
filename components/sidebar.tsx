@@ -13,9 +13,33 @@ import {
   X,
 } from "lucide-react";
 
-type Conv = { id: string; title: string };
+type Conv = { id: string; title: string; updatedAt?: string | null };
 type Proj = { id: string; name: string; isSystem?: boolean };
 type BrainEntry = { id: string; name: string; slug: string; icon: string; color: string };
+
+type DateGroup = { label: string; items: Conv[] };
+
+function groupByDate(convs: Conv[]): DateGroup[] {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfYesterday = new Date(startOfToday.getTime() - 86400_000);
+  const startOf7Days = new Date(startOfToday.getTime() - 6 * 86400_000);
+  const groups: DateGroup[] = [
+    { label: "Today", items: [] },
+    { label: "Yesterday", items: [] },
+    { label: "Previous 7 Days", items: [] },
+    { label: "Older", items: [] },
+  ];
+  for (const c of convs) {
+    const d = c.updatedAt ? new Date(c.updatedAt) : null;
+    if (!d || isNaN(d.getTime())) { groups[3].items.push(c); }
+    else if (d >= startOfToday) { groups[0].items.push(c); }
+    else if (d >= startOfYesterday) { groups[1].items.push(c); }
+    else if (d >= startOf7Days) { groups[2].items.push(c); }
+    else { groups[3].items.push(c); }
+  }
+  return groups.filter((g) => g.items.length > 0);
+}
 
 const SECTION_KEYS = ["projects", "brains", "recent"] as const;
 type SectionKey = (typeof SECTION_KEYS)[number];
@@ -275,43 +299,46 @@ export default function Sidebar({
               </p>
             </div>
           ) : !collapsed.has("recent") ? (
-            <ul className="space-y-1">
-              {conversations.map((c) => (
-                <li key={c.id}>
-                  <div
-                    onClick={() => onSelect(c.id)}
-                    className={`group flex min-h-11 cursor-pointer items-center gap-1 rounded-lg px-2 text-sm ${
-                      activeId === c.id
-                        ? "bg-accent"
-                        : "active:bg-accent/60 md:hover:bg-accent/60"
-                    }`}
-                  >
-                    <MessageSquare className="ml-1 size-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate">{c.title}</span>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onRename(c.id);
-                      }}
-                      aria-label="Rename conversation"
-                      className="flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground md:opacity-0 md:transition md:group-hover:opacity-100"
-                    >
-                      <Pencil className="size-4" />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDelete(c.id);
-                      }}
-                      aria-label="Delete conversation"
-                      className="flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-destructive md:opacity-0 md:transition md:group-hover:opacity-100"
-                    >
-                      <Trash2 className="size-4" />
-                    </button>
-                  </div>
-                </li>
+            <div className="space-y-3">
+              {groupByDate(conversations).map((group) => (
+                <div key={group.label}>
+                  <p className="mb-0.5 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                    {group.label}
+                  </p>
+                  <ul className="space-y-0.5">
+                    {group.items.map((c) => (
+                      <li key={c.id}>
+                        <div
+                          onClick={() => onSelect(c.id)}
+                          className={`group flex min-h-11 cursor-pointer items-center gap-1 rounded-lg px-2 text-sm ${
+                            activeId === c.id
+                              ? "bg-accent"
+                              : "active:bg-accent/60 md:hover:bg-accent/60"
+                          }`}
+                        >
+                          <MessageSquare className="ml-1 size-4 shrink-0 text-muted-foreground" />
+                          <span className="min-w-0 flex-1 truncate">{c.title}</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onRename(c.id); }}
+                            aria-label="Rename conversation"
+                            className="flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground md:opacity-0 md:transition md:group-hover:opacity-100"
+                          >
+                            <Pencil className="size-4" />
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onDelete(c.id); }}
+                            aria-label="Delete conversation"
+                            className="flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-destructive md:opacity-0 md:transition md:group-hover:opacity-100"
+                          >
+                            <Trash2 className="size-4" />
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               ))}
-            </ul>
+            </div>
           ) : null}
         </nav>
       </aside>

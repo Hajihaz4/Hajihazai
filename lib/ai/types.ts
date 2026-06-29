@@ -64,6 +64,11 @@ export interface Provider {
     messages: ChatMessage[],
     opts?: GenerateOptions,
   ): Promise<string>;
+  /** Token-by-token streaming completion. Yields text chunks. Optional. */
+  generateStream?(
+    model: string,
+    messages: ChatMessage[],
+  ): AsyncGenerator<string>;
   /** Native function calling (optional capability). Throws on transport error. */
   generateWithTools?(
     model: string,

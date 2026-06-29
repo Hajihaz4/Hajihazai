@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { LogOut, Shield, User } from "lucide-react";
 import { signOutAction } from "@/app/actions";
+import ThemeToggle from "./theme-toggle";
 
 /** Header avatar dropdown: My Profile · Admin Portal · Sign Out. */
 export default function ProfileMenu({
@@ -37,7 +38,7 @@ export default function ProfileMenu({
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div
             role="menu"
-            className="absolute right-0 z-50 mt-2 w-52 rounded-lg border bg-background p-1 shadow-lg"
+            className="absolute right-0 z-50 mt-2 w-60 rounded-lg border bg-background p-1 shadow-lg"
           >
             {name ? (
               <div className="truncate px-3 py-2 text-xs text-muted-foreground">
@@ -56,6 +57,12 @@ export default function ProfileMenu({
             >
               <Shield className="size-4" /> Admin Portal
             </a>
+            <div className="my-1 border-t" />
+            <div className="px-3 py-2">
+              <p className="mb-1.5 text-xs font-medium text-muted-foreground">Appearance</p>
+              <ThemeToggle />
+            </div>
+            <div className="my-1 border-t" />
             <form action={signOutAction}>
               <button className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-accent">
                 <LogOut className="size-4" /> Sign Out
