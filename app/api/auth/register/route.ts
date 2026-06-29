@@ -3,6 +3,8 @@ import { hashPassword, validatePassword } from "@/lib/auth/password";
 import { createUserSession, isSecureRequest } from "@/lib/auth/session";
 import { validateUsername } from "@/lib/onboarding/validate";
 import { rateLimitResponse } from "@/lib/ratelimit";
+import { isEmailBlocked } from "@/lib/admin/queries";
+import { syncUserToSheets } from "@/lib/google-sheets";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -16,6 +18,15 @@ export async function POST(req: Request) {
   const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
   if (!EMAIL_RE.test(email)) {
     return Response.json({ error: "A valid email is required" }, { status: 400 });
+  }
+
+  // Block terminated / banned accounts before doing any DB writes
+  const blocked = await isEmailBlocked(email).catch(() => false);
+  if (blocked) {
+    return Response.json(
+      { error: "This email address is not allowed to register" },
+      { status: 403 },
+    );
   }
 
   const pw = validatePassword(body?.password);
@@ -38,5 +49,9 @@ export async function POST(req: Request) {
   }
 
   await createUserSession(result.userId, isSecureRequest(req));
+
+  // Non-blocking Google Sheets sync — never delays or fails the signup
+  syncUserToSheets({ email, name: uname.value, source: "credentials", createdAt: new Date() });
+
   return Response.json({ ok: true });
 }

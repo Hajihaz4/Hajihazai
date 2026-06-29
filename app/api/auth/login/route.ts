@@ -2,6 +2,7 @@ import { getLoginProfile } from "@/lib/db/credential-queries";
 import { verifyPassword } from "@/lib/auth/password";
 import { createUserSession, isSecureRequest } from "@/lib/auth/session";
 import { rateLimitResponse } from "@/lib/ratelimit";
+import { isEmailBlocked } from "@/lib/admin/queries";
 
 /** Username/email + password login. Mints an Auth.js-compatible DB session. */
 export async function POST(req: Request) {
@@ -21,12 +22,19 @@ export async function POST(req: Request) {
     Response.json({ error: "Invalid username or password" }, { status: 401 });
 
   if (!profile?.passwordHash) {
-    // Still spend time verifying to reduce timing signal.
     await verifyPassword(password, "scrypt:00:00");
     return invalid();
   }
   const ok = await verifyPassword(password, profile.passwordHash);
   if (!ok) return invalid();
+
+  // Check blocked / terminated accounts after password verification (avoids timing oracle)
+  const blocked = profile.email
+    ? await isEmailBlocked(profile.email).catch(() => false)
+    : false;
+  if (blocked || profile.isDisabled) {
+    return Response.json({ error: "This account has been disabled" }, { status: 403 });
+  }
 
   await createUserSession(profile.userId, isSecureRequest(req));
   return Response.json({ ok: true });

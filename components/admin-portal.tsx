@@ -1,11 +1,19 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 /* ── Types ────────────────────────────────────────────────────── */
 
 type AdminRow = { id: string; username: string; createdAt: string; createdBy: string | null };
-type DataTab = "users" | "projects" | "documents" | "knowledge" | "brains";
+type DataTab =
+  | "users"
+  | "projects"
+  | "documents"
+  | "knowledge"
+  | "brains"
+  | "blocked-emails"
+  | "knowledge-permissions"
+  | "audit-log";
 
 type BrainRow = {
   id: string;
@@ -21,12 +29,45 @@ type BrainRow = {
 
 type Analytics = {
   totalUsers: number;
+  activeUsers: number;
+  newUsersToday: number;
   totalConversations: number;
   totalMessages: number;
   totalDocuments: number;
   totalChunks: number;
   totalBrains: number;
   totalMemories: number;
+  totalProjects: number;
+  totalAdmins: number;
+  charts?: {
+    dailySignups: Array<{ date: string; count: number }>;
+    dailyMessages: Array<{ date: string; count: number }>;
+    dailyKnowledgeUpdates: Array<{ date: string; count: number }>;
+  };
+};
+
+type UserRow = {
+  id: string;
+  email: string | null;
+  name: string | null;
+  username: string | null;
+  createdAt: string | null;
+  lastLogin: string | null;
+  isDisabled: boolean | null;
+  isTerminated: boolean | null;
+};
+
+type BlockedEmail = { id: string; email: string; reason: string | null; createdAt: string };
+type KnowledgePerm = { id: string; email: string; grantedBy: string | null; createdAt: string };
+type AuditEntry = {
+  id: string;
+  email: string;
+  action: string;
+  documentTitle: string;
+  documentId: string | null;
+  contentBefore: string | null;
+  contentAfter: string | null;
+  createdAt: string;
 };
 
 type KDoc = {
@@ -52,6 +93,51 @@ type BrainOpt = { id: string; name: string; icon: string };
 
 const CATEGORIES = ["Personal", "Family", "Education", "Business", "Trading", "Law", "Custom"];
 
+/* ── Mini bar chart (no external deps) ───────────────────────── */
+
+function BarChart({
+  data,
+  label,
+}: {
+  data: Array<{ date: string; count: number }>;
+  label: string;
+}) {
+  if (!data.length) {
+    return (
+      <div className="flex h-24 items-center justify-center rounded-lg border bg-muted/30 text-xs text-muted-foreground">
+        No data yet
+      </div>
+    );
+  }
+  const max = Math.max(...data.map((d) => d.count), 1);
+  return (
+    <div>
+      <p className="mb-1.5 text-xs font-medium text-muted-foreground">{label}</p>
+      <div className="flex h-24 items-end gap-1 rounded-lg border bg-muted/20 px-2 pb-1 pt-2">
+        {data.map((d) => (
+          <div
+            key={d.date}
+            className="group relative flex-1"
+            title={`${d.date}: ${d.count}`}
+          >
+            <div
+              className="rounded-sm bg-primary/60 transition-all group-hover:bg-primary"
+              style={{ height: `${Math.max(4, (d.count / max) * 72)}px` }}
+            />
+            <span className="absolute -top-4 left-1/2 hidden -translate-x-1/2 whitespace-nowrap rounded bg-popover px-1 py-0.5 text-[10px] shadow group-hover:block">
+              {d.count}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-0.5 flex justify-between text-[10px] text-muted-foreground">
+        <span>{data[0]?.date?.slice(5)}</span>
+        <span>{data[data.length - 1]?.date?.slice(5)}</span>
+      </div>
+    </div>
+  );
+}
+
 /* ── Component ─────────────────────────────────────────────────── */
 
 export default function AdminPortal() {
@@ -73,6 +159,26 @@ export default function AdminPortal() {
   /* data tab */
   const [dataTab, setDataTab] = useState<DataTab>("users");
   const [dataRows, setDataRows] = useState<Record<string, unknown>[]>([]);
+
+  /* users tab */
+  const [userRows, setUserRows] = useState<UserRow[]>([]);
+  const [userTotal, setUserTotal] = useState(0);
+  const [userPage, setUserPage] = useState(1);
+  const [userSearch, setUserSearch] = useState("");
+  const [userSearchInput, setUserSearchInput] = useState("");
+  const [userLoading, setUserLoading] = useState(false);
+
+  /* blocked emails tab */
+  const [blockedEmails, setBlockedEmails] = useState<BlockedEmail[]>([]);
+  const [newBlockedEmail, setNewBlockedEmail] = useState("");
+
+  /* knowledge permissions tab */
+  const [knowledgePerms, setKnowledgePerms] = useState<KnowledgePerm[]>([]);
+  const [newPermEmail, setNewPermEmail] = useState("");
+
+  /* audit log tab */
+  const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
+  const [auditExpanded, setAuditExpanded] = useState<string | null>(null);
 
   /* knowledge list */
   const [knowledge, setKnowledge] = useState<KDoc[]>([]);
@@ -109,7 +215,7 @@ export default function AdminPortal() {
   /* analytics */
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
 
-  /* ── loaders ───────────────────────────────────────────────── */
+  /* ── loaders ───────────────────────────────────────────────────── */
 
   const loadAdmins = useCallback(async (initial = false) => {
     const res = await fetch("/api/admin/admins");
@@ -118,7 +224,7 @@ export default function AdminPortal() {
     setAdmins(d.admins ?? []);
     setStatus("dashboard");
     if (initial) {
-      void loadTab("users");
+      void loadUsers(1, "");
       void loadKnowledge();
       void loadPickers();
       void loadBrains();
@@ -129,10 +235,49 @@ export default function AdminPortal() {
 
   useEffect(() => { void loadAdmins(true); }, [loadAdmins]);
 
+  async function loadUsers(page = 1, search = userSearch) {
+    setUserLoading(true);
+    try {
+      const params = new URLSearchParams({ page: String(page), limit: "20" });
+      if (search) params.set("search", search);
+      const res = await fetch(`/api/admin/users?${params}`);
+      if (!res.ok) return;
+      const d = await res.json().catch(() => ({}));
+      setUserRows(d.users ?? []);
+      setUserTotal(d.total ?? 0);
+      setUserPage(page);
+    } finally { setUserLoading(false); }
+  }
+
+  async function loadBlockedEmails() {
+    const res = await fetch("/api/admin/blocked-emails");
+    if (!res.ok) return;
+    const d = await res.json().catch(() => ({}));
+    setBlockedEmails(d.blockedEmails ?? []);
+  }
+
+  async function loadKnowledgePerms() {
+    const res = await fetch("/api/admin/knowledge-permissions");
+    if (!res.ok) return;
+    const d = await res.json().catch(() => ({}));
+    setKnowledgePerms(d.permissions ?? []);
+  }
+
+  async function loadAuditLog() {
+    const res = await fetch("/api/admin/audit-log");
+    if (!res.ok) return;
+    const d = await res.json().catch(() => ({}));
+    setAuditLog(d.entries ?? []);
+  }
+
   async function loadTab(tab: DataTab) {
     setDataTab(tab);
     if (tab === "knowledge") { void loadKnowledge(); return; }
     if (tab === "brains") { void loadBrains(); return; }
+    if (tab === "users") { void loadUsers(1, ""); setUserSearch(""); setUserSearchInput(""); return; }
+    if (tab === "blocked-emails") { void loadBlockedEmails(); return; }
+    if (tab === "knowledge-permissions") { void loadKnowledgePerms(); return; }
+    if (tab === "audit-log") { void loadAuditLog(); return; }
     const res = await fetch(`/api/admin/data?view=${tab}`);
     if (!res.ok) return;
     const d = await res.json().catch(() => ({}));
@@ -168,11 +313,7 @@ export default function AdminPortal() {
     ]);
     if (uRes.ok) {
       const d = await uRes.json().catch(() => ({}));
-      setAllUsers(
-        ((d.users ?? []) as { id: string; email: string | null }[]).map((u) => ({
-          id: u.id, email: u.email,
-        })),
-      );
+      setAllUsers(((d.users ?? []) as { id: string; email: string | null }[]).map((u) => ({ id: u.id, email: u.email })));
     }
     if (pRes.ok) {
       const d = await pRes.json().catch(() => ({}));
@@ -180,9 +321,7 @@ export default function AdminPortal() {
     }
     if (bRes.ok) {
       const d = await bRes.json().catch(() => ({}));
-      setAllBrainsOpt((d.brains ?? []).map((b: { id: string; name: string; icon: string }) => ({
-        id: b.id, name: b.name, icon: b.icon,
-      })));
+      setAllBrainsOpt((d.brains ?? []).map((b: { id: string; name: string; icon: string }) => ({ id: b.id, name: b.name, icon: b.icon })));
     }
   }
 
@@ -231,6 +370,85 @@ export default function AdminPortal() {
     await fetch("/api/admin/logout", { method: "POST" }); setStatus("login");
   }
 
+  /* ── user management ────────────────────────────────────────── */
+
+  async function userAction(id: string, action: "disable" | "enable" | "terminate" | "delete" | "reset-password") {
+    setError(null);
+    if (action === "delete") {
+      if (!confirm("Permanently delete this user and all their data?")) return;
+      const res = await fetch(`/api/admin/users/${id}`, { method: "DELETE" });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); setError(d.error ?? "Could not delete"); return; }
+      void loadUsers(userPage);
+      return;
+    }
+    if (action === "terminate") {
+      if (!confirm("Terminate this account? This will disable the account AND add the email to the blocked list. Future logins and registrations with this email will be permanently rejected.")) return;
+      const res = await fetch(`/api/admin/users/${id}/terminate`, { method: "POST" });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); setError(d.error ?? "Could not terminate"); return; }
+      void loadUsers(userPage);
+      return;
+    }
+    if (action === "reset-password") {
+      const pw = prompt("New password for user (min 8 chars):"); if (!pw) return;
+      if (pw.length < 8) { setError("Password must be at least 8 characters"); return; }
+      const res = await fetch(`/api/admin/users/${id}/reset-password`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pw }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); setError(d.error ?? "Could not reset password"); return; }
+      return;
+    }
+    const disabled = action === "disable";
+    const res = await fetch(`/api/admin/users/${id}/disable`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ disabled }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); setError(d.error ?? "Could not update user"); return; }
+    void loadUsers(userPage);
+  }
+
+  /* ── blocked emails ─────────────────────────────────────────── */
+
+  async function addBlockedEmail(e: React.FormEvent) {
+    e.preventDefault(); setError(null);
+    const email = newBlockedEmail.trim();
+    if (!email || !email.includes("@")) { setError("Valid email required"); return; }
+    const res = await fetch("/api/admin/blocked-emails", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { setError(d.error ?? "Could not block email"); return; }
+    setNewBlockedEmail(""); void loadBlockedEmails();
+  }
+
+  async function removeBlockedEmail(id: string) {
+    const res = await fetch(`/api/admin/blocked-emails/${id}`, { method: "DELETE" });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); setError(d.error ?? "Could not remove"); return; }
+    void loadBlockedEmails();
+  }
+
+  /* ── knowledge permissions ──────────────────────────────────── */
+
+  async function addKnowledgePerm(e: React.FormEvent) {
+    e.preventDefault(); setError(null);
+    const email = newPermEmail.trim();
+    if (!email || !email.includes("@")) { setError("Valid email required"); return; }
+    const res = await fetch("/api/admin/knowledge-permissions", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { setError(d.error ?? "Could not add permission"); return; }
+    setNewPermEmail(""); void loadKnowledgePerms();
+  }
+
+  async function removeKnowledgePerm(id: string) {
+    const res = await fetch(`/api/admin/knowledge-permissions/${id}`, { method: "DELETE" });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); setError(d.error ?? "Could not remove"); return; }
+    void loadKnowledgePerms();
+  }
+
   /* ── brain CRUD ──────────────────────────────────────────────── */
 
   function openBrainAdd() {
@@ -250,10 +468,7 @@ export default function AdminPortal() {
     try {
       const method = brainEditId ? "PATCH" : "POST";
       const url = brainEditId ? `/api/admin/brains/${brainEditId}` : "/api/admin/brains";
-      const res = await fetch(url, {
-        method, headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(brainForm),
-      });
+      const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(brainForm) });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { setError(d.error ?? "Could not save brain"); return; }
       setBrainForm(null); setBrainEditId(null); void loadBrains(); void loadAnalytics();
@@ -282,15 +497,9 @@ export default function AdminPortal() {
     if (!res.ok) { setError("Could not load document"); return; }
     const d = await res.json().catch(() => ({}));
     const full = d.document;
-    setEditId(doc.id);
-    setFUserId(doc.userId);
-    setFProjId(doc.projectId ?? "");
-    setFBrainId(doc.brainId ?? "");
-    setFTitle(full?.title ?? "");
-    setFCategory(full?.category ?? "");
-    setFContent(full?.content ?? "");
-    setFVisibility(doc.visibility ?? "private");
-    setFormMode("edit");
+    setEditId(doc.id); setFUserId(doc.userId); setFProjId(doc.projectId ?? ""); setFBrainId(doc.brainId ?? "");
+    setFTitle(full?.title ?? ""); setFCategory(full?.category ?? ""); setFContent(full?.content ?? "");
+    setFVisibility(doc.visibility ?? "private"); setFormMode("edit");
   }
 
   function cancelForm() { setFormMode("hidden"); setEditId(null); setError(null); }
@@ -306,19 +515,12 @@ export default function AdminPortal() {
       if (formMode === "add") {
         res = await fetch("/api/admin/knowledge", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userId: fUserId, projectId: fProjId || null, brainId: fBrainId || null,
-            title: fTitle, category: fCategory || null, content: fContent,
-            visibility: fVisibility,
-          }),
+          body: JSON.stringify({ userId: fUserId, projectId: fProjId || null, brainId: fBrainId || null, title: fTitle, category: fCategory || null, content: fContent, visibility: fVisibility }),
         });
       } else {
         res = await fetch(`/api/admin/knowledge/${editId}`, {
           method: "PATCH", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: fTitle, category: fCategory || null, brainId: fBrainId || null,
-            content: fContent, visibility: fVisibility,
-          }),
+          body: JSON.stringify({ title: fTitle, category: fCategory || null, brainId: fBrainId || null, content: fContent, visibility: fVisibility }),
         });
       }
       const d = await res.json().catch(() => ({}));
@@ -337,17 +539,8 @@ export default function AdminPortal() {
   /* ── derived data ───────────────────────────────────────────── */
 
   const userProjects = allProjects.filter((p) => p.userId === fUserId);
-
-  const uniqueCategories = [
-    ...new Set(knowledge.map((d) => d.category).filter(Boolean)),
-  ] as string[];
-  const uniqueProjects = [
-    ...new Map(
-      knowledge
-        .filter((d) => d.projectId && d.projectName)
-        .map((d) => [d.projectId, { id: d.projectId!, name: d.projectName! }]),
-    ).values(),
-  ];
+  const uniqueCategories = [...new Set(knowledge.map((d) => d.category).filter(Boolean))] as string[];
+  const uniqueProjects = [...new Map(knowledge.filter((d) => d.projectId && d.projectName).map((d) => [d.projectId, { id: d.projectId!, name: d.projectName! }])).values()];
 
   const filteredKnowledge = knowledge.filter((d) => {
     if (kSearch && !d.title.toLowerCase().includes(kSearch.toLowerCase())) return false;
@@ -362,9 +555,15 @@ export default function AdminPortal() {
 
   const input = "w-full rounded-lg border bg-background px-3 py-2.5 text-base outline-none focus:ring-2 focus:ring-ring sm:text-sm";
   const tabBtn = (active: boolean) =>
-    `px-4 py-2 text-sm capitalize transition-colors border-b-2 ${
+    `px-4 py-2 text-sm capitalize transition-colors border-b-2 whitespace-nowrap ${
       active ? "border-primary font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
     }`;
+
+  function userStatus(u: UserRow) {
+    if (u.isTerminated) return { label: "Terminated", cls: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" };
+    if (u.isDisabled) return { label: "Disabled", cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" };
+    return { label: "Active", cls: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" };
+  }
 
   /* ── render ─────────────────────────────────────────────────── */
 
@@ -399,21 +598,35 @@ export default function AdminPortal() {
 
       {/* Analytics stats */}
       {analytics && (
-        <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-          {[
-            { label: "Users", value: analytics.totalUsers },
-            { label: "Conversations", value: analytics.totalConversations },
-            { label: "Messages", value: analytics.totalMessages },
-            { label: "Documents", value: analytics.totalDocuments },
-            { label: "Chunks", value: analytics.totalChunks },
-            { label: "Brains", value: analytics.totalBrains },
-            { label: "Memories", value: analytics.totalMemories },
-          ].map(({ label, value }) => (
-            <div key={label} className="rounded-xl border p-3 text-center">
-              <p className="text-2xl font-semibold tabular-nums">{value.toLocaleString()}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{label}</p>
+        <div className="mb-6 space-y-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {[
+              { label: "Total Users", value: analytics.totalUsers },
+              { label: "Active (30d)", value: analytics.activeUsers ?? "—" },
+              { label: "New Today", value: analytics.newUsersToday ?? "—" },
+              { label: "Conversations", value: analytics.totalConversations },
+              { label: "Messages", value: analytics.totalMessages },
+              { label: "Documents", value: analytics.totalDocuments },
+              { label: "Chunks", value: analytics.totalChunks },
+              { label: "Brains", value: analytics.totalBrains },
+              { label: "Memories", value: analytics.totalMemories },
+              { label: "Projects", value: analytics.totalProjects ?? "—" },
+              { label: "Admins", value: analytics.totalAdmins ?? "—" },
+            ].map(({ label, value }) => (
+              <div key={label} className="rounded-xl border p-3 text-center">
+                <p className="text-xl font-semibold tabular-nums">{typeof value === "number" ? value.toLocaleString() : value}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{label}</p>
+              </div>
+            ))}
+          </div>
+
+          {analytics.charts && (
+            <div className="grid gap-4 sm:grid-cols-3">
+              <BarChart data={analytics.charts.dailySignups} label="Daily Signups (7d)" />
+              <BarChart data={analytics.charts.dailyMessages} label="Daily Messages (7d)" />
+              <BarChart data={analytics.charts.dailyKnowledgeUpdates} label="Knowledge Updates (7d)" />
             </div>
-          ))}
+          )}
         </div>
       )}
 
@@ -442,15 +655,125 @@ export default function AdminPortal() {
 
       {/* Data tab bar */}
       <div className="mb-0 flex gap-0 overflow-x-auto border-b">
-        {(["users", "projects", "documents", "knowledge", "brains"] as DataTab[]).map((t) => (
+        {(["users", "projects", "documents", "knowledge", "brains", "blocked-emails", "knowledge-permissions", "audit-log"] as DataTab[]).map((t) => (
           <button key={t} onClick={() => loadTab(t)} className={tabBtn(dataTab === t)}>
-            {t === "knowledge" ? "Knowledge Base" : t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === "knowledge" ? "Knowledge Base"
+              : t === "blocked-emails" ? "Blocked Emails"
+              : t === "knowledge-permissions" ? "K. Permissions"
+              : t === "audit-log" ? "Audit Log"
+              : t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
       </div>
 
-      {/* ── Users / Projects / Documents views ── */}
-      {dataTab !== "knowledge" && dataTab !== "brains" && (
+      {/* ── Users tab ── */}
+      {dataTab === "users" && (
+        <section className="mt-4">
+          <div className="mb-3 flex gap-2">
+            <form
+              className="flex flex-1 gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const s = userSearchInput.trim();
+                setUserSearch(s);
+                void loadUsers(1, s);
+              }}
+            >
+              <input
+                className="min-w-0 flex-1 rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+                placeholder="Search by email, name, or username…"
+                value={userSearchInput}
+                onChange={(e) => setUserSearchInput(e.target.value)}
+              />
+              <button type="submit" className="shrink-0 rounded-lg border px-3 py-2 text-sm hover:bg-accent">Search</button>
+              {userSearch && (
+                <button
+                  type="button"
+                  onClick={() => { setUserSearch(""); setUserSearchInput(""); void loadUsers(1, ""); }}
+                  className="shrink-0 rounded-lg border px-3 py-2 text-sm hover:bg-accent"
+                >
+                  Clear
+                </button>
+              )}
+            </form>
+          </div>
+
+          {userLoading ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">Loading users…</p>
+          ) : userRows.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">No users found.</p>
+          ) : (
+            <div className="overflow-hidden rounded-xl border">
+              <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-2 border-b bg-muted/40 px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <span>User</span>
+                <span className="w-20 text-center">Status</span>
+                <span className="w-28 text-right">Joined</span>
+                <span className="w-28 text-right">Last Login</span>
+                <span className="w-52 text-right">Actions</span>
+              </div>
+              {userRows.map((u) => {
+                const st = userStatus(u);
+                return (
+                  <div key={u.id} className="grid grid-cols-[1fr_auto_auto_auto_auto] items-center gap-2 border-b px-4 py-3 text-sm last:border-0">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{u.email ?? "—"}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {[u.name, u.username ? `@${u.username}` : null].filter(Boolean).join(" · ") || "—"}
+                      </p>
+                    </div>
+                    <span className="w-20 text-center">
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${st.cls}`}>{st.label}</span>
+                    </span>
+                    <span className="w-28 text-right text-xs text-muted-foreground">
+                      {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "—"}
+                    </span>
+                    <span className="w-28 text-right text-xs text-muted-foreground">
+                      {u.lastLogin ? new Date(u.lastLogin).toLocaleDateString() : "Never"}
+                    </span>
+                    <span className="flex w-52 justify-end gap-1.5 flex-wrap">
+                      <button onClick={() => userAction(u.id, "reset-password")} className="text-xs text-muted-foreground hover:text-foreground">Reset pw</button>
+                      {u.isDisabled
+                        ? <button onClick={() => userAction(u.id, "enable")} className="text-xs text-green-600 hover:opacity-80">Enable</button>
+                        : <button onClick={() => userAction(u.id, "disable")} className="text-xs text-amber-600 hover:opacity-80">Disable</button>
+                      }
+                      {!u.isTerminated && (
+                        <button onClick={() => userAction(u.id, "terminate")} className="text-xs text-destructive hover:opacity-80">Terminate</button>
+                      )}
+                      <button onClick={() => userAction(u.id, "delete")} className="text-xs text-destructive hover:opacity-80">Delete</button>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+            <span>{userTotal} user(s) total</span>
+            {userTotal > 20 && (
+              <div className="flex gap-2">
+                <button
+                  disabled={userPage <= 1}
+                  onClick={() => loadUsers(userPage - 1)}
+                  className="rounded border px-2 py-1 hover:bg-accent disabled:opacity-40"
+                >
+                  ← Prev
+                </button>
+                <span>Page {userPage} of {Math.ceil(userTotal / 20)}</span>
+                <button
+                  disabled={userPage * 20 >= userTotal}
+                  onClick={() => loadUsers(userPage + 1)}
+                  className="rounded border px-2 py-1 hover:bg-accent disabled:opacity-40"
+                >
+                  Next →
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* ── Projects / Documents (raw JSON) ── */}
+      {(dataTab === "projects" || dataTab === "documents") && (
         <section className="mt-4">
           <div className="overflow-x-auto rounded-lg border">
             <pre className="max-h-96 overflow-auto p-3 text-xs">{JSON.stringify(dataRows, null, 2)}</pre>
@@ -459,10 +782,161 @@ export default function AdminPortal() {
         </section>
       )}
 
+      {/* ── Blocked Emails tab ── */}
+      {dataTab === "blocked-emails" && (
+        <section className="mt-4">
+          <form onSubmit={addBlockedEmail} className="mb-4 flex gap-2">
+            <input
+              className="min-w-0 flex-1 rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+              placeholder="Email to block…"
+              value={newBlockedEmail}
+              onChange={(e) => setNewBlockedEmail(e.target.value)}
+              type="email"
+            />
+            <button type="submit" className="shrink-0 rounded-lg bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground hover:opacity-90">
+              Block Email
+            </button>
+          </form>
+
+          {blockedEmails.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">No blocked emails.</p>
+          ) : (
+            <div className="overflow-hidden rounded-xl border">
+              <div className="grid grid-cols-[1fr_auto_auto] gap-3 border-b bg-muted/40 px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <span>Email</span>
+                <span className="w-28 text-right">Blocked On</span>
+                <span className="w-16 text-right">Action</span>
+              </div>
+              {blockedEmails.map((b) => (
+                <div key={b.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-3 border-b px-4 py-3 text-sm last:border-0">
+                  <div>
+                    <p className="font-medium">{b.email}</p>
+                    {b.reason && <p className="text-xs text-muted-foreground">{b.reason}</p>}
+                  </div>
+                  <span className="w-28 text-right text-xs text-muted-foreground">
+                    {new Date(b.createdAt).toLocaleDateString()}
+                  </span>
+                  <span className="flex w-16 justify-end">
+                    <button onClick={() => removeBlockedEmail(b.id)} className="text-xs text-destructive hover:opacity-80">Unblock</button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="mt-1.5 text-xs text-muted-foreground">{blockedEmails.length} blocked email(s)</p>
+        </section>
+      )}
+
+      {/* ── Knowledge Permissions tab ── */}
+      {dataTab === "knowledge-permissions" && (
+        <section className="mt-4">
+          <p className="mb-3 text-sm text-muted-foreground">
+            Only emails listed here (plus the built-in defaults) can add or edit knowledge.
+          </p>
+          <form onSubmit={addKnowledgePerm} className="mb-4 flex gap-2">
+            <input
+              className="min-w-0 flex-1 rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+              placeholder="Email to grant write access…"
+              value={newPermEmail}
+              onChange={(e) => setNewPermEmail(e.target.value)}
+              type="email"
+            />
+            <button type="submit" className="shrink-0 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90">
+              Grant Access
+            </button>
+          </form>
+
+          <div className="mb-3 rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            Built-in defaults (always permitted): iamhajihaz@gmail.com · now.kuddosahib@gmail.com
+          </div>
+
+          {knowledgePerms.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">No additional permissions configured.</p>
+          ) : (
+            <div className="overflow-hidden rounded-xl border">
+              <div className="grid grid-cols-[1fr_auto_auto] gap-3 border-b bg-muted/40 px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <span>Email</span>
+                <span className="w-28 text-right">Granted On</span>
+                <span className="w-16 text-right">Action</span>
+              </div>
+              {knowledgePerms.map((p) => (
+                <div key={p.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-3 border-b px-4 py-3 text-sm last:border-0">
+                  <p className="font-medium">{p.email}</p>
+                  <span className="w-28 text-right text-xs text-muted-foreground">
+                    {new Date(p.createdAt).toLocaleDateString()}
+                  </span>
+                  <span className="flex w-16 justify-end">
+                    <button onClick={() => removeKnowledgePerm(p.id)} className="text-xs text-destructive hover:opacity-80">Revoke</button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="mt-1.5 text-xs text-muted-foreground">{knowledgePerms.length} custom permission(s)</p>
+        </section>
+      )}
+
+      {/* ── Audit Log tab ── */}
+      {dataTab === "audit-log" && (
+        <section className="mt-4">
+          {auditLog.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">No audit entries yet.</p>
+          ) : (
+            <div className="overflow-hidden rounded-xl border">
+              <div className="grid grid-cols-[auto_1fr_auto_auto] gap-3 border-b bg-muted/40 px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <span className="w-16">Action</span>
+                <span>Document</span>
+                <span className="w-36 text-right">User</span>
+                <span className="w-28 text-right">Time</span>
+              </div>
+              {auditLog.map((entry) => (
+                <div key={entry.id} className="border-b last:border-0">
+                  <div
+                    className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-3 px-4 py-3 text-sm cursor-pointer hover:bg-muted/30"
+                    onClick={() => setAuditExpanded(auditExpanded === entry.id ? null : entry.id)}
+                  >
+                    <span className="w-16">
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                        entry.action === "create" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                          : entry.action === "delete" ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                          : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                      }`}>
+                        {entry.action}
+                      </span>
+                    </span>
+                    <p className="truncate font-medium">{entry.documentTitle}</p>
+                    <span className="w-36 truncate text-right text-xs text-muted-foreground">{entry.email}</span>
+                    <span className="w-28 text-right text-xs text-muted-foreground">
+                      {new Date(entry.createdAt).toLocaleString()}
+                    </span>
+                  </div>
+                  {auditExpanded === entry.id && (entry.contentBefore || entry.contentAfter) && (
+                    <div className="border-t bg-muted/20 px-4 py-3 text-xs">
+                      {entry.contentBefore && (
+                        <div className="mb-2">
+                          <p className="mb-0.5 font-medium text-muted-foreground">Before:</p>
+                          <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded border bg-background p-2">{entry.contentBefore}</pre>
+                        </div>
+                      )}
+                      {entry.contentAfter && (
+                        <div>
+                          <p className="mb-0.5 font-medium text-muted-foreground">After:</p>
+                          <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded border bg-background p-2">{entry.contentAfter}</pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="mt-1.5 text-xs text-muted-foreground">{auditLog.length} audit entr{auditLog.length === 1 ? "y" : "ies"}</p>
+        </section>
+      )}
+
       {/* ── Brains tab ── */}
       {dataTab === "brains" && (
         <section className="mt-4">
-          {/* Brain form */}
           {brainForm !== null && (
             <div className="mb-6 rounded-xl border bg-muted/30 p-5">
               <h3 className="mb-4 text-sm font-semibold">{brainEditId ? "Edit Brain" : "Add Brain"}</h3>
@@ -541,91 +1015,45 @@ export default function AdminPortal() {
       {/* ── Knowledge Base tab ── */}
       {dataTab === "knowledge" && (
         <section className="mt-4">
-
-          {/* Knowledge form (Add / Edit) */}
           {formMode !== "hidden" && (
             <div className="mb-6 rounded-xl border bg-muted/30 p-5">
-              <h3 className="mb-4 text-sm font-semibold">
-                {formMode === "add" ? "Add Knowledge" : "Edit Knowledge"}
-              </h3>
+              <h3 className="mb-4 text-sm font-semibold">{formMode === "add" ? "Add Knowledge" : "Edit Knowledge"}</h3>
               <form onSubmit={saveKnowledge} className="space-y-4">
                 <div className="grid gap-4 sm:grid-cols-2">
-
-                  {/* User (add only) */}
                   {formMode === "add" && (
                     <div>
                       <label className="mb-1 block text-xs font-medium text-muted-foreground">User *</label>
-                      <select
-                        className={input}
-                        value={fUserId}
-                        onChange={(e) => { setFUserId(e.target.value); setFProjId(""); }}
-                      >
+                      <select className={input} value={fUserId} onChange={(e) => { setFUserId(e.target.value); setFProjId(""); }}>
                         <option value="">Select user…</option>
-                        {allUsers.map((u) => (
-                          <option key={u.id} value={u.id}>{u.email ?? u.id}</option>
-                        ))}
+                        {allUsers.map((u) => (<option key={u.id} value={u.id}>{u.email ?? u.id}</option>))}
                       </select>
                     </div>
                   )}
-
-                  {/* Project */}
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                      Project <span className="font-normal text-muted-foreground/70">(optional)</span>
-                    </label>
-                    <select
-                      className={input}
-                      value={fProjId}
-                      onChange={(e) => setFProjId(e.target.value)}
-                      disabled={formMode === "add" && !fUserId}
-                    >
+                    <label className="mb-1 block text-xs font-medium text-muted-foreground">Project <span className="font-normal text-muted-foreground/70">(optional)</span></label>
+                    <select className={input} value={fProjId} onChange={(e) => setFProjId(e.target.value)} disabled={formMode === "add" && !fUserId}>
                       <option value="">No project (user-level)</option>
-                      {(formMode === "add" ? userProjects : allProjects).map((p) => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
+                      {(formMode === "add" ? userProjects : allProjects).map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
                     </select>
                   </div>
-
-                  {/* Brain */}
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                      Brain <span className="font-normal text-muted-foreground/70">(optional)</span>
-                    </label>
+                    <label className="mb-1 block text-xs font-medium text-muted-foreground">Brain <span className="font-normal text-muted-foreground/70">(optional)</span></label>
                     <select className={input} value={fBrainId} onChange={(e) => setFBrainId(e.target.value)}>
                       <option value="">No brain (global)</option>
-                      {allBrainsOpt.map((b) => (
-                        <option key={b.id} value={b.id}>{b.icon} {b.name}</option>
-                      ))}
+                      {allBrainsOpt.map((b) => (<option key={b.id} value={b.id}>{b.icon} {b.name}</option>))}
                     </select>
                   </div>
-
-                  {/* Visibility */}
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                      Visibility
-                    </label>
-                    <select
-                      className={input}
-                      value={fVisibility}
-                      onChange={(e) => setFVisibility(e.target.value as "private" | "global")}
-                    >
+                    <label className="mb-1 block text-xs font-medium text-muted-foreground">Visibility</label>
+                    <select className={input} value={fVisibility} onChange={(e) => setFVisibility(e.target.value as "private" | "global")}>
                       <option value="private">🔒 Private — owner only</option>
                       <option value="global">🌐 Global — all users</option>
                     </select>
                   </div>
-
-                  {/* Title */}
                   <div>
                     <label className="mb-1 block text-xs font-medium text-muted-foreground">Title *</label>
-                    <input
-                      className={input}
-                      placeholder="e.g. College"
-                      value={fTitle}
-                      onChange={(e) => setFTitle(e.target.value)}
-                    />
+                    <input className={input} placeholder="e.g. College" value={fTitle} onChange={(e) => setFTitle(e.target.value)} />
                   </div>
-
-                  {/* Category */}
                   <div>
                     <label className="mb-1 block text-xs font-medium text-muted-foreground">Category</label>
                     <select className={input} value={fCategory} onChange={(e) => setFCategory(e.target.value)}>
@@ -634,102 +1062,51 @@ export default function AdminPortal() {
                     </select>
                   </div>
                 </div>
-
-                {/* Content */}
                 <div>
                   <label className="mb-1 block text-xs font-medium text-muted-foreground">Content *</label>
-                  <textarea
-                    className={`${input} min-h-[140px] resize-y font-mono text-xs leading-relaxed`}
-                    placeholder="Paste knowledge here…"
-                    value={fContent}
-                    onChange={(e) => setFContent(e.target.value)}
-                  />
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    {fContent.length.toLocaleString()} characters — automatically chunked and indexed on save.
-                  </p>
+                  <textarea className={`${input} min-h-[140px] resize-y font-mono text-xs leading-relaxed`} placeholder="Paste knowledge here…" value={fContent} onChange={(e) => setFContent(e.target.value)} />
+                  <p className="mt-0.5 text-xs text-muted-foreground">{fContent.length.toLocaleString()} characters — automatically chunked and indexed on save.</p>
                 </div>
-
                 <div className="flex gap-2">
-                  <button
-                    type="submit"
-                    disabled={fSaving}
-                    className="min-h-10 rounded-lg bg-primary px-5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-                  >
+                  <button type="submit" disabled={fSaving} className="min-h-10 rounded-lg bg-primary px-5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50">
                     {fSaving ? "Saving…" : formMode === "add" ? "Add to Knowledge Base" : "Save Changes"}
                   </button>
-                  <button
-                    type="button"
-                    onClick={cancelForm}
-                    className="min-h-10 rounded-lg border px-4 text-sm hover:bg-accent"
-                  >
-                    Cancel
-                  </button>
+                  <button type="button" onClick={cancelForm} className="min-h-10 rounded-lg border px-4 text-sm hover:bg-accent">Cancel</button>
                 </div>
               </form>
             </div>
           )}
 
-          {/* Toolbar */}
           <div className="mb-3 flex flex-wrap items-center gap-2">
             {formMode === "hidden" && (
-              <button
-                onClick={openAddForm}
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
-              >
-                + Add Knowledge
-              </button>
+              <button onClick={openAddForm} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90">+ Add Knowledge</button>
             )}
-            <input
-              className="min-w-0 flex-1 rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-              placeholder="Search by title…"
-              value={kSearch}
-              onChange={(e) => setKSearch(e.target.value)}
-            />
-            <select
-              className="rounded-lg border bg-background px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-              value={kCatFilter}
-              onChange={(e) => setKCatFilter(e.target.value)}
-            >
+            <input className="min-w-0 flex-1 rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" placeholder="Search by title…" value={kSearch} onChange={(e) => setKSearch(e.target.value)} />
+            <select className="rounded-lg border bg-background px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" value={kCatFilter} onChange={(e) => setKCatFilter(e.target.value)}>
               <option value="">All categories</option>
               {uniqueCategories.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
-            <select
-              className="rounded-lg border bg-background px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-              value={kProjFilter}
-              onChange={(e) => setKProjFilter(e.target.value)}
-            >
+            <select className="rounded-lg border bg-background px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" value={kProjFilter} onChange={(e) => setKProjFilter(e.target.value)}>
               <option value="">All projects</option>
               {uniqueProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-            <select
-              className="rounded-lg border bg-background px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-              value={kBrainFilter}
-              onChange={(e) => setKBrainFilter(e.target.value)}
-            >
+            <select className="rounded-lg border bg-background px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" value={kBrainFilter} onChange={(e) => setKBrainFilter(e.target.value)}>
               <option value="">All brains</option>
               {allBrainsOpt.map((b) => <option key={b.id} value={b.id}>{b.icon} {b.name}</option>)}
             </select>
-            <select
-              className="rounded-lg border bg-background px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-              value={kVisFilter}
-              onChange={(e) => setKVisFilter(e.target.value)}
-            >
+            <select className="rounded-lg border bg-background px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" value={kVisFilter} onChange={(e) => setKVisFilter(e.target.value)}>
               <option value="">All visibility</option>
               <option value="global">🌐 Global</option>
               <option value="private">🔒 Private</option>
             </select>
           </div>
 
-          {/* Knowledge list */}
           {filteredKnowledge.length === 0 ? (
             <div className="rounded-xl border p-8 text-center text-sm text-muted-foreground">
-              {knowledge.length === 0
-                ? "No knowledge documents yet. Click \"+ Add Knowledge\" to get started."
-                : "No results match your filters."}
+              {knowledge.length === 0 ? 'No knowledge documents yet. Click "+ Add Knowledge" to get started.' : "No results match your filters."}
             </div>
           ) : (
             <div className="overflow-hidden rounded-xl border">
-              {/* Table header */}
               <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto_auto] gap-3 border-b bg-muted/40 px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 <span>Title</span>
                 <span className="w-20 text-center">Visibility</span>
@@ -739,12 +1116,8 @@ export default function AdminPortal() {
                 <span className="w-24 text-right">Created</span>
                 <span className="w-20 text-right">Actions</span>
               </div>
-
               {filteredKnowledge.map((doc) => (
-                <div
-                  key={doc.id}
-                  className="grid grid-cols-[1fr_auto_auto_auto_auto_auto_auto] items-center gap-3 border-b px-4 py-3 text-sm last:border-0"
-                >
+                <div key={doc.id} className="grid grid-cols-[1fr_auto_auto_auto_auto_auto_auto] items-center gap-3 border-b px-4 py-3 text-sm last:border-0">
                   <div className="min-w-0">
                     <p className="truncate font-medium">{doc.title}</p>
                     <p className="truncate text-xs text-muted-foreground">{doc.userEmail ?? doc.userId}</p>
@@ -757,46 +1130,22 @@ export default function AdminPortal() {
                     )}
                   </span>
                   <span className="w-24 text-center">
-                    {doc.category ? (
-                      <span className="rounded-full bg-accent px-2 py-0.5 text-xs">{doc.category}</span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
+                    {doc.category ? <span className="rounded-full bg-accent px-2 py-0.5 text-xs">{doc.category}</span> : <span className="text-xs text-muted-foreground">—</span>}
                   </span>
                   <span className="w-24 text-center">
-                    {doc.brainName ? (
-                      <span className="rounded-full bg-accent px-2 py-0.5 text-xs">{doc.brainIcon} {doc.brainName}</span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
+                    {doc.brainName ? <span className="rounded-full bg-accent px-2 py-0.5 text-xs">{doc.brainIcon} {doc.brainName}</span> : <span className="text-xs text-muted-foreground">—</span>}
                   </span>
-                  <span className="w-32 truncate text-xs text-muted-foreground">
-                    {doc.projectName ?? <span className="italic">User-level</span>}
-                  </span>
-                  <span className="w-24 text-right text-xs text-muted-foreground">
-                    {new Date(doc.createdAt).toLocaleDateString()}
-                  </span>
+                  <span className="w-32 truncate text-xs text-muted-foreground">{doc.projectName ?? <span className="italic">User-level</span>}</span>
+                  <span className="w-24 text-right text-xs text-muted-foreground">{new Date(doc.createdAt).toLocaleDateString()}</span>
                   <span className="flex w-20 justify-end gap-2">
-                    <button
-                      onClick={() => openEditForm(doc)}
-                      className="text-xs text-muted-foreground hover:text-foreground"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => deleteKnowledge(doc.id, doc.title)}
-                      className="text-xs text-destructive hover:opacity-80"
-                    >
-                      Delete
-                    </button>
+                    <button onClick={() => openEditForm(doc)} className="text-xs text-muted-foreground hover:text-foreground">Edit</button>
+                    <button onClick={() => deleteKnowledge(doc.id, doc.title)} className="text-xs text-destructive hover:opacity-80">Delete</button>
                   </span>
                 </div>
               ))}
             </div>
           )}
-          <p className="mt-1.5 text-xs text-muted-foreground">
-            {filteredKnowledge.length} of {knowledge.length} document(s)
-          </p>
+          <p className="mt-1.5 text-xs text-muted-foreground">{filteredKnowledge.length} of {knowledge.length} document(s)</p>
         </section>
       )}
     </main>

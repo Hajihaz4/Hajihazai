@@ -1,4 +1,4 @@
-import { count, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, gte, ilike, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   admins,
@@ -11,9 +11,16 @@ import {
   messages,
   userMemory,
   brains,
+  blockedEmails,
+  knowledgePermissions,
+  knowledgeAuditLog,
   type Admin,
+  type BlockedEmail,
+  type KnowledgePermission,
+  type KnowledgeAuditLog,
 } from "@/lib/db/schema";
 import { isUniqueViolation } from "@/lib/db/credential-queries";
+import { hashPassword } from "@/lib/auth/password";
 
 /** Admin data layer. Admin identity is DB-driven (no ADMIN_EMAILS env). */
 
@@ -244,4 +251,328 @@ export async function adminListKnowledgeWithBrain() {
     .leftJoin(brains, eq(brains.id, knowledgeDocument.brainId))
     .leftJoin(users, eq(users.id, knowledgeDocument.userId))
     .orderBy(desc(knowledgeDocument.createdAt));
+}
+
+/* ----------------------------- user management ----------------------------- */
+
+export async function adminListUsersPage(opts?: { search?: string; page?: number; limit?: number }) {
+  const limit = Math.min(opts?.limit ?? 20, 100);
+  const offset = ((opts?.page ?? 1) - 1) * limit;
+  const search = opts?.search?.trim();
+
+  const where = search
+    ? or(
+        ilike(users.email, `%${search}%`),
+        ilike(userProfiles.username, `%${search}%`),
+        ilike(users.name, `%${search}%`),
+      )
+    : undefined;
+
+  const [rows, [{ cnt }]] = await Promise.all([
+    db
+      .select({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        username: userProfiles.username,
+        createdAt: userProfiles.createdAt,
+        lastLogin: userProfiles.lastLogin,
+        isDisabled: userProfiles.isDisabled,
+        isTerminated: userProfiles.isTerminated,
+      })
+      .from(users)
+      .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
+      .where(where)
+      .orderBy(desc(userProfiles.createdAt))
+      .limit(limit)
+      .offset(offset),
+    db
+      .select({ cnt: count() })
+      .from(users)
+      .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
+      .where(where),
+  ]);
+
+  return { users: rows, total: Number(cnt) };
+}
+
+export async function adminGetUserDetail(userId: string) {
+  const [row] = await db
+    .select({
+      id: users.id,
+      email: users.email,
+      name: users.name,
+      username: userProfiles.username,
+      mobileNumber: userProfiles.mobileNumber,
+      countryCode: userProfiles.countryCode,
+      googleId: userProfiles.googleId,
+      isDisabled: userProfiles.isDisabled,
+      isTerminated: userProfiles.isTerminated,
+      createdAt: userProfiles.createdAt,
+      lastLogin: userProfiles.lastLogin,
+    })
+    .from(users)
+    .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
+    .where(eq(users.id, userId));
+
+  if (!row) return null;
+
+  const [[{ convCount }], [{ msgCount }], [{ docCount }]] = await Promise.all([
+    db.select({ convCount: count() }).from(conversations).where(eq(conversations.userId, userId)),
+    db.select({ msgCount: count() }).from(messages)
+      .leftJoin(conversations, eq(conversations.id, messages.conversationId))
+      .where(eq(conversations.userId, userId)),
+    db.select({ docCount: count() }).from(knowledgeDocument).where(eq(knowledgeDocument.userId, userId)),
+  ]);
+
+  return { ...row, conversationCount: Number(convCount), messageCount: Number(msgCount), documentCount: Number(docCount) };
+}
+
+export async function adminSetUserDisabled(userId: string, disabled: boolean): Promise<boolean> {
+  const [row] = await db
+    .update(userProfiles)
+    .set({ isDisabled: disabled, updatedAt: new Date() })
+    .where(eq(userProfiles.userId, userId))
+    .returning();
+  return !!row;
+}
+
+export async function adminTerminateUser(userId: string, email: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx
+      .update(userProfiles)
+      .set({ isDisabled: true, isTerminated: true, updatedAt: new Date() })
+      .where(eq(userProfiles.userId, userId));
+    await tx
+      .insert(blockedEmails)
+      .values({ email: email.toLowerCase(), reason: "terminated" })
+      .onConflictDoNothing();
+  });
+}
+
+export async function adminDeleteUser(userId: string): Promise<boolean> {
+  const [row] = await db.delete(users).where(eq(users.id, userId)).returning();
+  return !!row;
+}
+
+export async function adminResetUserPassword(userId: string, newPassword: string): Promise<boolean> {
+  const hash = await hashPassword(newPassword);
+  const [row] = await db
+    .update(userProfiles)
+    .set({ passwordHash: hash, updatedAt: new Date() })
+    .where(eq(userProfiles.userId, userId))
+    .returning();
+  return !!row;
+}
+
+/* ----------------------------- blocked emails ----------------------------- */
+
+export async function listBlockedEmails(opts?: { search?: string }) {
+  const search = opts?.search?.trim();
+  return db
+    .select()
+    .from(blockedEmails)
+    .where(search ? ilike(blockedEmails.email, `%${search}%`) : undefined)
+    .orderBy(desc(blockedEmails.createdAt));
+}
+
+export async function isEmailBlocked(email: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: blockedEmails.id })
+    .from(blockedEmails)
+    .where(eq(blockedEmails.email, email.toLowerCase()))
+    .limit(1);
+  return !!row;
+}
+
+export async function addBlockedEmail(email: string, reason?: string): Promise<BlockedEmail | null> {
+  try {
+    const [row] = await db
+      .insert(blockedEmails)
+      .values({ email: email.toLowerCase(), reason: reason ?? null })
+      .returning();
+    return row ?? null;
+  } catch (err) {
+    if (isUniqueViolation(err)) return null;
+    throw err;
+  }
+}
+
+export async function removeBlockedEmail(id: string): Promise<boolean> {
+  const [row] = await db.delete(blockedEmails).where(eq(blockedEmails.id, id)).returning();
+  return !!row;
+}
+
+/* ------------------------- knowledge permissions -------------------------- */
+
+const DEFAULT_PERMITTED_EMAILS = ["iamhajihaz@gmail.com", "now.kuddosahib@gmail.com"];
+
+export async function listKnowledgePermissions(opts?: { search?: string }) {
+  const search = opts?.search?.trim();
+  return db
+    .select()
+    .from(knowledgePermissions)
+    .where(search ? ilike(knowledgePermissions.email, `%${search}%`) : undefined)
+    .orderBy(desc(knowledgePermissions.createdAt));
+}
+
+export async function isKnowledgeWritePermitted(email: string): Promise<boolean> {
+  const normalised = email.toLowerCase();
+  if (DEFAULT_PERMITTED_EMAILS.includes(normalised)) return true;
+  const [row] = await db
+    .select({ id: knowledgePermissions.id })
+    .from(knowledgePermissions)
+    .where(eq(knowledgePermissions.email, normalised))
+    .limit(1);
+  return !!row;
+}
+
+export async function addKnowledgePermission(email: string, grantedBy?: string): Promise<KnowledgePermission | null> {
+  try {
+    const [row] = await db
+      .insert(knowledgePermissions)
+      .values({ email: email.toLowerCase(), grantedBy: grantedBy ?? null })
+      .returning();
+    return row ?? null;
+  } catch (err) {
+    if (isUniqueViolation(err)) return null;
+    throw err;
+  }
+}
+
+export async function removeKnowledgePermission(id: string): Promise<boolean> {
+  const [row] = await db
+    .delete(knowledgePermissions)
+    .where(eq(knowledgePermissions.id, id))
+    .returning();
+  return !!row;
+}
+
+/* -------------------------- knowledge audit log --------------------------- */
+
+export async function addKnowledgeAuditEntry(entry: {
+  userId: string | null;
+  email: string;
+  action: string;
+  documentId?: string | null;
+  documentTitle: string;
+  contentBefore?: string | null;
+  contentAfter?: string | null;
+}): Promise<void> {
+  await db.insert(knowledgeAuditLog).values({
+    userId: entry.userId ?? null,
+    email: entry.email,
+    action: entry.action,
+    documentId: entry.documentId ?? null,
+    documentTitle: entry.documentTitle,
+    contentBefore: entry.contentBefore ?? null,
+    contentAfter: entry.contentAfter ?? null,
+  });
+}
+
+export async function listKnowledgeAuditLog(limit = 50): Promise<KnowledgeAuditLog[]> {
+  return db
+    .select()
+    .from(knowledgeAuditLog)
+    .orderBy(desc(knowledgeAuditLog.createdAt))
+    .limit(limit);
+}
+
+/* ----------------------------- enhanced analytics ------------------------- */
+
+export interface AdminAnalyticsV2 {
+  totalUsers: number;
+  activeUsers: number;
+  newUsersToday: number;
+  totalConversations: number;
+  totalMessages: number;
+  totalDocuments: number;
+  totalChunks: number;
+  totalBrains: number;
+  totalMemories: number;
+  totalProjects: number;
+  totalAdmins: number;
+  charts: {
+    dailySignups: Array<{ date: string; count: number }>;
+    dailyMessages: Array<{ date: string; count: number }>;
+    dailyKnowledgeUpdates: Array<{ date: string; count: number }>;
+  };
+}
+
+export async function getAdminAnalyticsV2(): Promise<AdminAnalyticsV2> {
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+  const [
+    [{ cnt: totalUsers }],
+    [{ cnt: activeUsers }],
+    [{ cnt: newUsersToday }],
+    [{ cnt: totalConversations }],
+    [{ cnt: totalMessages }],
+    [{ cnt: totalDocuments }],
+    [{ cnt: totalChunks }],
+    [{ cnt: totalBrains }],
+    [{ cnt: totalMemories }],
+    [{ cnt: totalProjects }],
+    [{ cnt: totalAdmins }],
+    dailySignups,
+    dailyMessages,
+    dailyKnowledgeUpdates,
+  ] = await Promise.all([
+    db.select({ cnt: count() }).from(users),
+    db.select({ cnt: count() }).from(userProfiles)
+      .where(gte(userProfiles.lastLogin, thirtyDaysAgo)),
+    db.select({ cnt: count() }).from(userProfiles)
+      .where(gte(userProfiles.createdAt, todayStart)),
+    db.select({ cnt: count() }).from(conversations),
+    db.select({ cnt: count() }).from(messages),
+    db.select({ cnt: count() }).from(knowledgeDocument),
+    db.select({ cnt: count() }).from(knowledgeChunk),
+    db.select({ cnt: count() }).from(brains),
+    db.select({ cnt: count() }).from(userMemory),
+    db.select({ cnt: count() }).from(projects),
+    db.select({ cnt: count() }).from(admins),
+    db.select({
+      date: sql<string>`date_trunc('day', ${userProfiles.createdAt})::date::text`,
+      count: count(),
+    }).from(userProfiles)
+      .where(gte(userProfiles.createdAt, sevenDaysAgo))
+      .groupBy(sql`date_trunc('day', ${userProfiles.createdAt})`)
+      .orderBy(sql`date_trunc('day', ${userProfiles.createdAt})`),
+    db.select({
+      date: sql<string>`date_trunc('day', ${messages.createdAt})::date::text`,
+      count: count(),
+    }).from(messages)
+      .where(and(gte(messages.createdAt, sevenDaysAgo), eq(messages.role, "user")))
+      .groupBy(sql`date_trunc('day', ${messages.createdAt})`)
+      .orderBy(sql`date_trunc('day', ${messages.createdAt})`),
+    db.select({
+      date: sql<string>`date_trunc('day', ${knowledgeAuditLog.createdAt})::date::text`,
+      count: count(),
+    }).from(knowledgeAuditLog)
+      .where(gte(knowledgeAuditLog.createdAt, sevenDaysAgo))
+      .groupBy(sql`date_trunc('day', ${knowledgeAuditLog.createdAt})`)
+      .orderBy(sql`date_trunc('day', ${knowledgeAuditLog.createdAt})`),
+  ]);
+
+  return {
+    totalUsers: Number(totalUsers),
+    activeUsers: Number(activeUsers),
+    newUsersToday: Number(newUsersToday),
+    totalConversations: Number(totalConversations),
+    totalMessages: Number(totalMessages),
+    totalDocuments: Number(totalDocuments),
+    totalChunks: Number(totalChunks),
+    totalBrains: Number(totalBrains),
+    totalMemories: Number(totalMemories),
+    totalProjects: Number(totalProjects),
+    totalAdmins: Number(totalAdmins),
+    charts: {
+      dailySignups: dailySignups.map((r) => ({ date: r.date, count: Number(r.count) })),
+      dailyMessages: dailyMessages.map((r) => ({ date: r.date, count: Number(r.count) })),
+      dailyKnowledgeUpdates: dailyKnowledgeUpdates.map((r) => ({ date: r.date, count: Number(r.count) })),
+    },
+  };
 }

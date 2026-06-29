@@ -407,6 +407,8 @@ export const userProfiles = pgTable(
     passwordHash: text("password_hash"),
     mobileNumber: text("mobile_number"),
     countryCode: text("country_code"),
+    isDisabled: boolean("is_disabled").notNull().default(false),
+    isTerminated: boolean("is_terminated").notNull().default(false),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
     lastLogin: timestamp("last_login", { mode: "date" }),
@@ -542,3 +544,68 @@ export const brains = pgTable(
 
 export type Brain = typeof brains.$inferSelect;
 export type NewBrain = typeof brains.$inferInsert;
+
+/* ------------------------------------------------------------------ */
+/* V1 Launch — Blocked Emails (terminated / banned users)              */
+/* ------------------------------------------------------------------ */
+
+export const blockedEmails = pgTable(
+  "blocked_emails",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    email: text("email").notNull().unique(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("blocked_emails_email_idx").on(t.email)],
+);
+
+export type BlockedEmail = typeof blockedEmails.$inferSelect;
+
+/* ------------------------------------------------------------------ */
+/* V1 Launch — Knowledge Update Permissions (write-access whitelist)   */
+/* ------------------------------------------------------------------ */
+
+export const knowledgePermissions = pgTable(
+  "knowledge_permissions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    email: text("email").notNull().unique(),
+    grantedBy: text("granted_by"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("knowledge_permissions_email_idx").on(t.email)],
+);
+
+export type KnowledgePermission = typeof knowledgePermissions.$inferSelect;
+
+/* ------------------------------------------------------------------ */
+/* V1 Launch — Knowledge Audit Log                                     */
+/* ------------------------------------------------------------------ */
+
+export const knowledgeAuditLog = pgTable(
+  "knowledge_audit_log",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+    email: text("email").notNull(),
+    action: text("action").notNull(),
+    documentId: text("document_id"),
+    documentTitle: text("document_title").notNull(),
+    contentBefore: text("content_before"),
+    contentAfter: text("content_after"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("knowledge_audit_log_user_idx").on(t.userId),
+    index("knowledge_audit_log_created_idx").on(t.createdAt),
+  ],
+);
+
+export type KnowledgeAuditLog = typeof knowledgeAuditLog.$inferSelect;

@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import type { Msg } from "./chat-app";
 import BrainSelector, { type BrainOption, type BrainMode } from "./brain-selector";
 import { ProfileCard, isProfileCardQuery, DEFAULT_PROFILE } from "./profile-card";
+import VoiceInput from "./voice-input";
 
 const NEAR_BOTTOM_PX = 80; // px from bottom to trigger auto-scroll
 
@@ -63,11 +64,17 @@ const Chat = memo(function Chat({
     isNearBottomRef.current = dist < NEAR_BOTTOM_PX;
   }, []);
 
-  // Auto-scroll: instant during streaming (smooth would fight the user), smooth on new message.
+  // Auto-scroll using direct scrollTop to prevent upward viewport jumps.
   useEffect(() => {
     if (!isNearBottomRef.current) return;
+    const el = scrollContainerRef.current;
+    if (!el) return;
     const isStreaming = messages.some((m) => m.streaming);
-    bottomRef.current?.scrollIntoView({ behavior: isStreaming ? "instant" : "smooth" });
+    if (isStreaming) {
+      el.scrollTop = el.scrollHeight;
+    } else {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    }
   }, [messages, sending]);
 
   // When a conversation loads (messages go from 0 → N), always jump to bottom.
@@ -76,7 +83,8 @@ const Chat = memo(function Chat({
     const wasEmpty = prevCountRef.current === 0;
     const hasMessages = messages.length > 0;
     if (wasEmpty && hasMessages) {
-      bottomRef.current?.scrollIntoView({ behavior: "instant" });
+      const el = scrollContainerRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
       isNearBottomRef.current = true;
     }
     prevCountRef.current = messages.length;
@@ -233,6 +241,10 @@ const Chat = memo(function Chat({
               aria-label="Message"
               placeholder="Message HajiHaz AI…"
               className="max-h-40 min-h-11 flex-1 resize-none rounded-xl border bg-background px-4 py-3 text-base outline-none focus:ring-2 focus:ring-ring sm:text-sm"
+            />
+            <VoiceInput
+              onTranscript={(t) => setInput(input ? `${input} ${t}` : t)}
+              disabled={isGenerating || sending}
             />
             {isGenerating ? (
               <button
