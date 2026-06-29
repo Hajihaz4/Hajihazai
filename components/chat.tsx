@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { Copy, RotateCw, Send, Trash2 } from "lucide-react";
+import { useEffect, useRef, useCallback } from "react";
+import { Copy, RotateCw, Send, Square, Trash2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Msg } from "./chat-app";
 import BrainSelector, { type BrainOption, type BrainMode } from "./brain-selector";
 import { ProfileCard, isProfileCardQuery, DEFAULT_PROFILE } from "./profile-card";
+
+const NEAR_BOTTOM_PX = 80; // px from bottom to trigger auto-scroll
 
 export default function Chat({
   messages,
@@ -16,7 +18,9 @@ export default function Chat({
   onCopy,
   onDelete,
   onRetry,
+  onStop,
   sending,
+  isGenerating,
   loading,
   isAdmin,
   debug,
@@ -33,7 +37,9 @@ export default function Chat({
   onCopy: (text: string) => void;
   onDelete: (msg: Msg) => void;
   onRetry: (msg: Msg) => void;
+  onStop: () => void;
   sending: boolean;
+  isGenerating: boolean;
   loading: boolean;
   isAdmin: boolean;
   debug: boolean;
@@ -43,15 +49,53 @@ export default function Chat({
   onSelectBrain: (id: string | null) => void;
   onToggleBrainMode: () => void;
 }) {
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const isNearBottomRef = useRef(true);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Track whether user is near the bottom of the scroll container.
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isNearBottomRef.current = dist < NEAR_BOTTOM_PX;
+  }, []);
+
+  // Auto-scroll: instant during streaming (smooth would fight the user), smooth on new message.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!isNearBottomRef.current) return;
+    const isStreaming = messages.some((m) => m.streaming);
+    bottomRef.current?.scrollIntoView({ behavior: isStreaming ? "instant" : "smooth" });
   }, [messages, sending]);
+
+  // When a conversation loads (messages go from 0 → N), always jump to bottom.
+  const prevCountRef = useRef(messages.length);
+  useEffect(() => {
+    const wasEmpty = prevCountRef.current === 0;
+    const hasMessages = messages.length > 0;
+    if (wasEmpty && hasMessages) {
+      bottomRef.current?.scrollIntoView({ behavior: "instant" });
+      isNearBottomRef.current = true;
+    }
+    prevCountRef.current = messages.length;
+  }, [messages.length]);
+
+  // Auto-resize textarea as content changes.
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
+  }, [input]);
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+      >
         <div className="mx-auto max-w-3xl px-3 py-5 sm:px-4 sm:py-6">
           {loading ? (
             <MessagesSkeleton />
@@ -71,7 +115,6 @@ export default function Chat({
             >
               {messages.map((m, idx) => {
                 const isUser = m.role === "user";
-                // Show profile card below the first assistant reply to a profile query.
                 const prevMsg = messages[idx - 1];
                 const showProfileCard =
                   !isUser &&
@@ -81,9 +124,7 @@ export default function Chat({
                 return (
                   <div
                     key={m.id}
-                    className={`group flex flex-col ${
-                      isUser ? "items-end" : "items-start"
-                    }`}
+                    className={`group flex flex-col ${isUser ? "items-end" : "items-start"}`}
                   >
                     <div className="max-w-[85%] sm:max-w-[80%]">
                       <div
@@ -110,50 +151,42 @@ export default function Chat({
                       </div>
 
                       {/* Action bar — hover on desktop, always shown on mobile. */}
-                      <div
-                        className={`mt-1 flex items-center gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 ${
-                          isUser ? "justify-end" : "justify-start"
-                        }`}
-                      >
-                        <ActionButton
-                          label="Copy"
-                          onClick={() => onCopy(m.content)}
+                      {!m.streaming && (
+                        <div
+                          className={`mt-1 flex items-center gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 ${
+                            isUser ? "justify-end" : "justify-start"
+                          }`}
                         >
-                          <Copy className="size-3.5" />
-                        </ActionButton>
-
-                        {m.role === "assistant" ? (
-                          <ActionButton
-                            label={m.error ? "Retry" : "Regenerate"}
-                            onClick={() => onRetry(m)}
-                          >
-                            <RotateCw className="size-3.5" />
+                          <ActionButton label="Copy" onClick={() => onCopy(m.content)}>
+                            <Copy className="size-3.5" />
                           </ActionButton>
-                        ) : null}
 
-                        <ActionButton
-                          label="Delete"
-                          onClick={() => onDelete(m)}
-                          danger
-                        >
-                          <Trash2 className="size-3.5" />
-                        </ActionButton>
-                      </div>
+                          {m.role === "assistant" ? (
+                            <ActionButton
+                              label={m.error ? "Retry" : "Regenerate"}
+                              onClick={() => onRetry(m)}
+                            >
+                              <RotateCw className="size-3.5" />
+                            </ActionButton>
+                          ) : null}
 
-                      {/* Admin-only debug panel. Normal users never see this. */}
+                          <ActionButton label="Delete" onClick={() => onDelete(m)} danger>
+                            <Trash2 className="size-3.5" />
+                          </ActionButton>
+                        </div>
+                      )}
+
                       {isAdmin && debug && m.role === "assistant" && m.meta ? (
                         <DebugPanel meta={m.meta} />
                       ) : null}
 
-                      {/* Profile card — shown for profile queries */}
-                      {showProfileCard && (
-                        <ProfileCard data={DEFAULT_PROFILE} />
-                      )}
+                      {showProfileCard && <ProfileCard data={DEFAULT_PROFILE} />}
                     </div>
                   </div>
                 );
               })}
 
+              {/* Loading dots — only while pre-processing (before first token arrives) */}
               {sending && (
                 <div className="flex justify-start" aria-live="polite">
                   <div className="flex items-center gap-1 rounded-2xl bg-muted px-4 py-3">
@@ -171,7 +204,6 @@ export default function Chat({
       </div>
 
       <div className="border-t">
-        {/* Brain selector — above the text input */}
         {brains.length > 0 && (
           <div className="border-b px-1">
             <BrainSelector
@@ -185,31 +217,43 @@ export default function Chat({
         )}
 
         <div className="p-3 pb-safe sm:p-4">
-        <div className="mx-auto flex max-w-3xl items-end gap-2">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                onSend();
-              }
-            }}
-            rows={1}
-            aria-label="Message"
-            placeholder="Message HajiHaz AI…"
-            className="max-h-40 min-h-11 flex-1 resize-none rounded-xl border bg-background px-4 py-3 text-base outline-none focus:ring-2 focus:ring-ring sm:text-sm"
-          />
-          <button
-            onClick={onSend}
-            disabled={sending || !input.trim()}
-            aria-label="Send message"
-            aria-busy={sending}
-            className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground disabled:opacity-40"
-          >
-            <Send className="size-4" />
-          </button>
-        </div>
+          <div className="mx-auto flex max-w-3xl items-end gap-2">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  onSend();
+                }
+              }}
+              rows={1}
+              aria-label="Message"
+              placeholder="Message HajiHaz AI…"
+              className="max-h-40 min-h-11 flex-1 resize-none rounded-xl border bg-background px-4 py-3 text-base outline-none focus:ring-2 focus:ring-ring sm:text-sm"
+            />
+            {isGenerating ? (
+              <button
+                type="button"
+                onClick={onStop}
+                aria-label="Stop generation"
+                title="Stop generation"
+                className="flex size-11 shrink-0 items-center justify-center rounded-xl border bg-background text-foreground hover:bg-accent"
+              >
+                <Square className="size-4 fill-current" />
+              </button>
+            ) : (
+              <button
+                onClick={onSend}
+                disabled={!input.trim()}
+                aria-label="Send message"
+                className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground disabled:opacity-40"
+              >
+                <Send className="size-4" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -246,13 +290,10 @@ function DebugPanel({ meta }: { meta: NonNullable<Msg["meta"]> }) {
   const u = meta.usage;
   return (
     <div className="mt-1.5 rounded-md border bg-muted/40 px-2.5 py-1.5 font-mono text-[11px] leading-relaxed text-muted-foreground">
+      <div>provider: {meta.provider ?? "—"} · model: {meta.model ?? "—"}</div>
       <div>
-        provider: {meta.provider ?? "—"} · model: {meta.model ?? "—"}
-      </div>
-      <div>
-        latency: {meta.latencyMs ?? "—"}ms · tokens
-        {u?.approx ? "≈" : ":"} {u?.totalTokens ?? "—"} (p{u?.promptTokens ?? "—"}/c
-        {u?.completionTokens ?? "—"})
+        latency: {meta.latencyMs ?? "—"}ms · tokens{u?.approx ? "≈" : ":"} {u?.totalTokens ?? "—"} (p
+        {u?.promptTokens ?? "—"}/c{u?.completionTokens ?? "—"})
       </div>
       {meta.fallbackFrom ? (
         <div className="text-amber-600">

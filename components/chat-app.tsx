@@ -78,19 +78,23 @@ export default function ChatApp({
   const [projects, setProjects] = useState<Proj[]>([]);
 
   const [levels, setLevels] = useState<LevelOption[]>(initialLevels);
-  const [level, setLevel] = useState<string>(() => {
-    // Restore persisted level; fall back to first available from server.
-    try {
-      const saved = typeof localStorage !== "undefined" && localStorage.getItem("hh-level");
-      if (saved && initialLevels.some((l) => l.level === saved && l.available)) return saved;
-    } catch { /* ignore */ }
-    return initialLevels.find((l) => l.available)?.level ?? "medium";
-  });
+  // Use server value as initial to avoid SSR/client hydration mismatch;
+  // restore from localStorage in useEffect below.
+  const [level, setLevel] = useState<string>(
+    initialLevels.find((l) => l.available)?.level ?? "medium",
+  );
   const [debug, setDebug] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   function changeLevel(newLevel: string) {
     setLevel(newLevel);
     try { localStorage.setItem("hh-level", newLevel); } catch { /* ignore */ }
+  }
+
+  function stopGeneration() {
+    abortRef.current?.abort();
+    abortRef.current = null;
   }
 
   // Brain system state
@@ -112,6 +116,17 @@ export default function ChatApp({
     toastTimer.current = setTimeout(() => setToast(null), 1800);
   }
 
+  // Restore localStorage preferences client-side (avoids SSR/hydration mismatch).
+  useEffect(() => {
+    try {
+      const savedLevel = localStorage.getItem("hh-level");
+      if (savedLevel && initialLevels.some((l) => l.level === savedLevel && l.available)) {
+        setLevel(savedLevel);
+      }
+    } catch { /* ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Initial conversation + live health refresh (hides failing models).
   useEffect(() => {
     if (activeId) void openConversation(activeId);
@@ -132,9 +147,14 @@ export default function ChatApp({
         }),
       );
       setBrains(loaded);
-      // Auto-select Haji Core as the default brain.
+      // Restore persisted brain, or default to haji-core.
+      try {
+        const savedBrainId = localStorage.getItem("hh-brain-id");
+        const match = savedBrainId && loaded.find((b) => b.id === savedBrainId);
+        if (match) { setSelectedBrainId(match.id); return; }
+      } catch { /* ignore */ }
       const hajiCore = loaded.find((b) => b.slug === "haji-core");
-      if (hajiCore && !selectedBrainId) setSelectedBrainId(hajiCore.id);
+      if (hajiCore) setSelectedBrainId(hajiCore.id);
     } catch {
       /* best-effort */
     }
@@ -310,6 +330,7 @@ export default function ChatApp({
   ) {
     if (sending) return;
     setSending(true);
+    setIsGenerating(true);
 
     let convId = activeId;
     const streamMsgId = uuid();
@@ -325,6 +346,7 @@ export default function ChatApp({
       }
 
       const controller = new AbortController();
+      abortRef.current = controller;
       const timer = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
       let res: Response;
       try {
@@ -428,7 +450,9 @@ export default function ChatApp({
       ]);
     } finally {
       setSending(false);
-      // If stream ended without completing (mid-stream error), clear cursor.
+      setIsGenerating(false);
+      abortRef.current = null;
+      // If stream ended without completing (mid-stream error/stop), clear cursor.
       if (addedStreamMsg) {
         setMessages((p) =>
           p.map((m) => (m.id === streamMsgId && m.streaming ? { ...m, streaming: false } : m)),
@@ -536,14 +560,19 @@ export default function ChatApp({
           onCopy={copyMessage}
           onDelete={deleteMessage}
           onRetry={retryMessage}
+          onStop={stopGeneration}
           sending={sending}
+          isGenerating={isGenerating}
           loading={loading}
           isAdmin={isAdmin}
           debug={debug}
           brains={brains}
           selectedBrainId={selectedBrainId}
           brainMode={brainMode}
-          onSelectBrain={setSelectedBrainId}
+          onSelectBrain={(id) => {
+            setSelectedBrainId(id);
+            try { if (id) localStorage.setItem("hh-brain-id", id); else localStorage.removeItem("hh-brain-id"); } catch { /**/ }
+          }}
           onToggleBrainMode={() => setBrainMode((m) => m === "manual" ? "smart" : "manual")}
         />
       </div>
