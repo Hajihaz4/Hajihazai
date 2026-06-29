@@ -21,6 +21,7 @@ export async function ingestDocument(
     projectId?: string | null;
     brainId?: string | null;
     title?: string;
+    visibility?: "private" | "global";
   },
 ): Promise<
   | { ok: true; documentId: string; chunks: number }
@@ -43,6 +44,7 @@ export async function ingestDocument(
     sourceType: ext === "pdf" ? "pdf" : "text",
     projectId: input.projectId ?? null,
     brainId: input.brainId ?? null,
+    visibility: input.visibility ?? "private",
   });
 
   await createContent(userId, doc.id, text);
@@ -72,6 +74,7 @@ export async function ingestText(
     projectId?: string | null;
     category?: string | null;
     brainId?: string | null;
+    visibility?: "private" | "global";
   },
 ): Promise<
   | { ok: true; documentId: string; chunks: number }
@@ -89,6 +92,7 @@ export async function ingestText(
     projectId: input.projectId ?? null,
     category: input.category ?? null,
     brainId: input.brainId ?? null,
+    visibility: input.visibility ?? "private",
   });
 
   await createContent(userId, doc.id, text);

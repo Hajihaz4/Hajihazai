@@ -1,4 +1,4 @@
-import { and, cosineDistance, desc, eq, gt, isNotNull, sql } from "drizzle-orm";
+import { and, cosineDistance, desc, eq, gt, isNotNull, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { knowledgeChunk, knowledgeDocument } from "@/lib/db/schema";
 import { embed } from "@/lib/ai/embeddings/router";
@@ -8,7 +8,10 @@ import { projectScope, brainScope } from "./scope";
  * Standalone semantic search over knowledge-base chunk embeddings.
  * - Embeds the query with the Phase 6 embedding router.
  * - Ranks chunks by cosine similarity (pgvector), joined to the parent doc.
- * - ACTIVE documents only, owned by the user, above the threshold, sorted desc.
+ * - ACTIVE documents only, above the threshold, sorted desc.
+ *
+ * Ownership: includes the requesting user's private docs AND any global docs
+ * (visibility='global'), which are visible to all authenticated users.
  *
  * Standalone: does NOT inject into prompts, does NOT touch chat, no RAG.
  */
@@ -36,6 +39,15 @@ export async function semanticDocumentSearch(
   // cosine similarity = 1 - cosine distance
   const similarity = sql<number>`1 - (${cosineDistance(knowledgeChunk.embedding, queryVector)})`;
 
+  // Private docs: user owns them AND they pass the project scope filter.
+  // Global docs: visible to all users regardless of ownership or project.
+  const privateOwner =
+    opts.projectId !== undefined
+      ? and(eq(knowledgeDocument.userId, userId), projectScope(opts.projectId)!)
+      : eq(knowledgeDocument.userId, userId);
+
+  const ownerClause = or(privateOwner, eq(knowledgeDocument.visibility, "global"));
+
   const rows = await db
     .select({
       documentId: knowledgeDocument.id,
@@ -51,12 +63,11 @@ export async function semanticDocumentSearch(
     )
     .where(
       and(
-        eq(knowledgeDocument.userId, userId), // ownership
-        eq(knowledgeDocument.status, "active"), // active documents only
-        projectScope(opts.projectId), // project isolation
-        brainScope(opts.brainId), // brain isolation
+        ownerClause,
+        eq(knowledgeDocument.status, "active"),
+        brainScope(opts.brainId),
         isNotNull(knowledgeChunk.embedding),
-        gt(similarity, threshold), // similarity threshold
+        gt(similarity, threshold),
       ),
     )
     .orderBy(desc(similarity))

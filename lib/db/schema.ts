@@ -228,6 +228,11 @@ export const knowledgeStatus = pgEnum("knowledge_status", [
   "failed",
 ]);
 
+export const knowledgeVisibility = pgEnum("knowledge_visibility", [
+  "private",
+  "global",
+]);
+
 export const knowledgeDocument = pgTable(
   "knowledge_document",
   {
@@ -246,6 +251,8 @@ export const knowledgeDocument = pgTable(
     brainId: text("brain_id").references(() => brains.id, { onDelete: "set null" }),
     sourceType: knowledgeSourceType("sourceType").notNull().default("note"),
     status: knowledgeStatus("status").notNull().default("active"),
+    // Visibility: private = owner only; global = all authenticated users.
+    visibility: knowledgeVisibility("visibility").notNull().default("private"),
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
   },

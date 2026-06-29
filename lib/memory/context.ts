@@ -11,7 +11,6 @@ import {
   type DocumentSearchHit,
 } from "@/lib/knowledge/semantic-search";
 import { keywordDocumentSearch } from "@/lib/knowledge/keyword-search";
-import { listSystemProjects } from "@/lib/db/project-queries";
 
 const DEFAULT_BUDGET_TOKENS = 800;
 const SEMANTIC_LIMIT = 10;
@@ -181,19 +180,16 @@ async function searchScope(
 }
 
 /**
- * Build the knowledge context block from the user's documents on the current
- * message. Active + owned documents only; scoped to the current project (see
- * projectScope). Token budget: max 2000 characters.
+ * Build the knowledge context block for a user's message.
  *
- * Retrieval is two-tier so stored knowledge is ALWAYS usable:
- *   1. Semantic (embeddings) — best quality, but only works for embedded chunks
- *      and a healthy embedding provider.
- *   2. Keyword fallback — runs whenever semantic returns nothing (un-embedded
- *      chunks or a down provider). This is what makes knowledge override
- *      hallucination reliably.
+ * Dual-tier retrieval (semantic + keyword) runs in parallel. Results include:
+ *  - The user's own private documents (scoped to the current project)
+ *  - All global documents (visibility='global'), e.g. Haji Core — visible to
+ *    every authenticated user regardless of which account is asking.
  *
- * System projects (e.g. "Haji Core") are ALWAYS included regardless of which
- * project the chat belongs to — their knowledge loads globally for the user.
+ * Global visibility is enforced at the WHERE clause level in both
+ * semanticDocumentSearch and keywordDocumentSearch, so this function no longer
+ * needs any special system-project logic.
  */
 export async function buildKnowledgeContext(
   userId: string,
@@ -202,26 +198,10 @@ export async function buildKnowledgeContext(
   const query = opts.query?.trim();
   if (!query) return { block: "", chunks: [], count: 0 };
 
-  // Primary scope: the conversation's own project (or user-level if null).
-  const primaryHits = await searchScope(userId, query, opts.projectId, opts.brainId);
-
-  // Always include system project knowledge (e.g. Haji Core) globally.
-  const systemProjects = await listSystemProjects(userId);
-  const seen = new Set<string>(primaryHits.map((h) => h.chunkId));
-  const allHits: DocumentSearchHit[] = [...primaryHits];
-  for (const sp of systemProjects) {
-    if (sp.id === opts.projectId) continue; // already included above
-    const sysHits = await searchScope(userId, query, sp.id, opts.brainId);
-    for (const h of sysHits) {
-      if (!seen.has(h.chunkId)) {
-        seen.add(h.chunkId);
-        allHits.push(h);
-      }
-    }
-  }
+  const hits = await searchScope(userId, query, opts.projectId, opts.brainId);
 
   const { block, used, count } = buildKnowledgeBlock(
-    allHits,
+    hits,
     opts.maxChars ?? KNOWLEDGE_MAX_CHARS,
   );
 

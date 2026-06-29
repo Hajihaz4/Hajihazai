@@ -4,6 +4,7 @@ import { knowledgeDocument } from "./schema";
 
 type SourceType = "pdf" | "text" | "website" | "note";
 type DocStatus = "processing" | "active" | "failed";
+type DocVisibility = "private" | "global";
 
 /**
  * Phase 7.0 — Knowledge Base document registry (foundation only).
@@ -39,6 +40,7 @@ export async function createDocument(
     projectId?: string | null;
     category?: string | null;
     brainId?: string | null;
+    visibility?: DocVisibility;
   },
 ) {
   const [row] = await db
@@ -49,6 +51,7 @@ export async function createDocument(
       projectId: input.projectId ?? null,
       category: input.category ?? null,
       brainId: input.brainId ?? null,
+      visibility: input.visibility ?? "private",
       ...(input.sourceType ? { sourceType: input.sourceType } : {}),
       ...(input.status ? { status: input.status } : {}),
     })

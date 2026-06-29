@@ -18,7 +18,7 @@ export async function POST(req: Request) {
   const sess = await requireAdmin();
   if (!sess) return new Response("Unauthorized", { status: 401 });
 
-  const { userId, projectId, brainId, title, category, content } = await req.json();
+  const { userId, projectId, brainId, title, category, content, visibility } = await req.json();
 
   if (!userId || typeof userId !== "string") {
     return Response.json({ error: "userId is required" }, { status: 400 });
@@ -36,6 +36,7 @@ export async function POST(req: Request) {
     projectId: projectId || null,
     category: category || null,
     brainId: brainId || null,
+    visibility: visibility === "global" ? "global" : "private",
   });
 
   if (!result.ok) {

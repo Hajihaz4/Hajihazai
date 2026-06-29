@@ -229,6 +229,7 @@ export async function adminListKnowledgeWithBrain() {
       category: knowledgeDocument.category,
       sourceType: knowledgeDocument.sourceType,
       status: knowledgeDocument.status,
+      visibility: knowledgeDocument.visibility,
       projectId: knowledgeDocument.projectId,
       projectName: projects.name,
       brainId: knowledgeDocument.brainId,

@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { knowledgeChunk, knowledgeDocument } from "@/lib/db/schema";
 import { projectScope, brainScope } from "./scope";
@@ -51,6 +51,14 @@ export async function keywordDocumentSearch(
     sql` or `,
   )})`;
 
+  // Private docs: user owns them AND they pass the project scope filter.
+  // Global docs: visible to all users regardless of ownership or project.
+  const privateOwner =
+    opts.projectId !== undefined
+      ? and(eq(knowledgeDocument.userId, userId), projectScope(opts.projectId)!)
+      : eq(knowledgeDocument.userId, userId);
+  const ownerClause = or(privateOwner, eq(knowledgeDocument.visibility, "global"));
+
   const rows = await db
     .select({
       documentId: knowledgeDocument.id,
@@ -66,9 +74,8 @@ export async function keywordDocumentSearch(
     )
     .where(
       and(
-        eq(knowledgeDocument.userId, userId),
+        ownerClause,
         eq(knowledgeDocument.status, "active"),
-        projectScope(opts.projectId),
         brainScope(opts.brainId),
         anyMatch,
       ),

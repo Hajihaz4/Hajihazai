@@ -35,6 +35,7 @@ type KDoc = {
   category: string | null;
   sourceType: string;
   status: string;
+  visibility: "private" | "global";
   projectId: string | null;
   projectName: string | null;
   brainId: string | null;
@@ -95,6 +96,7 @@ export default function AdminPortal() {
   const [allProjects, setAllProjects] = useState<ProjOpt[]>([]);
   const [allBrainsOpt, setAllBrainsOpt] = useState<BrainOpt[]>([]);
   const [fBrainId, setFBrainId] = useState("");
+  const [fVisibility, setFVisibility] = useState<"private" | "global">("private");
 
   /* brains tab */
   const [brains, setBrains] = useState<BrainRow[]>([]);
@@ -102,6 +104,7 @@ export default function AdminPortal() {
   const [brainEditId, setBrainEditId] = useState<string | null>(null);
   const [brainSaving, setBrainSaving] = useState(false);
   const [kBrainFilter, setKBrainFilter] = useState("");
+  const [kVisFilter, setKVisFilter] = useState("");
 
   /* analytics */
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
@@ -270,7 +273,7 @@ export default function AdminPortal() {
 
   function openAddForm() {
     setEditId(null); setFUserId(""); setFProjId(""); setFBrainId(""); setFTitle("");
-    setFCategory(""); setFContent(""); setFormMode("add"); setError(null);
+    setFCategory(""); setFContent(""); setFVisibility("private"); setFormMode("add"); setError(null);
   }
 
   async function openEditForm(doc: KDoc) {
@@ -286,6 +289,7 @@ export default function AdminPortal() {
     setFTitle(full?.title ?? "");
     setFCategory(full?.category ?? "");
     setFContent(full?.content ?? "");
+    setFVisibility(doc.visibility ?? "private");
     setFormMode("edit");
   }
 
@@ -305,13 +309,15 @@ export default function AdminPortal() {
           body: JSON.stringify({
             userId: fUserId, projectId: fProjId || null, brainId: fBrainId || null,
             title: fTitle, category: fCategory || null, content: fContent,
+            visibility: fVisibility,
           }),
         });
       } else {
         res = await fetch(`/api/admin/knowledge/${editId}`, {
           method: "PATCH", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            title: fTitle, category: fCategory || null, brainId: fBrainId || null, content: fContent,
+            title: fTitle, category: fCategory || null, brainId: fBrainId || null,
+            content: fContent, visibility: fVisibility,
           }),
         });
       }
@@ -348,6 +354,7 @@ export default function AdminPortal() {
     if (kCatFilter && d.category !== kCatFilter) return false;
     if (kProjFilter && d.projectId !== kProjFilter) return false;
     if (kBrainFilter && d.brainId !== kBrainFilter) return false;
+    if (kVisFilter && d.visibility !== kVisFilter) return false;
     return true;
   });
 
@@ -592,6 +599,21 @@ export default function AdminPortal() {
                     </select>
                   </div>
 
+                  {/* Visibility */}
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                      Visibility
+                    </label>
+                    <select
+                      className={input}
+                      value={fVisibility}
+                      onChange={(e) => setFVisibility(e.target.value as "private" | "global")}
+                    >
+                      <option value="private">🔒 Private — owner only</option>
+                      <option value="global">🌐 Global — all users</option>
+                    </select>
+                  </div>
+
                   {/* Title */}
                   <div>
                     <label className="mb-1 block text-xs font-medium text-muted-foreground">Title *</label>
@@ -687,6 +709,15 @@ export default function AdminPortal() {
               <option value="">All brains</option>
               {allBrainsOpt.map((b) => <option key={b.id} value={b.id}>{b.icon} {b.name}</option>)}
             </select>
+            <select
+              className="rounded-lg border bg-background px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+              value={kVisFilter}
+              onChange={(e) => setKVisFilter(e.target.value)}
+            >
+              <option value="">All visibility</option>
+              <option value="global">🌐 Global</option>
+              <option value="private">🔒 Private</option>
+            </select>
           </div>
 
           {/* Knowledge list */}
@@ -699,8 +730,9 @@ export default function AdminPortal() {
           ) : (
             <div className="overflow-hidden rounded-xl border">
               {/* Table header */}
-              <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-3 border-b bg-muted/40 px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto_auto] gap-3 border-b bg-muted/40 px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 <span>Title</span>
+                <span className="w-20 text-center">Visibility</span>
                 <span className="w-24 text-center">Category</span>
                 <span className="w-24 text-center">Brain</span>
                 <span className="w-32">Project</span>
@@ -711,12 +743,19 @@ export default function AdminPortal() {
               {filteredKnowledge.map((doc) => (
                 <div
                   key={doc.id}
-                  className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] items-center gap-3 border-b px-4 py-3 text-sm last:border-0"
+                  className="grid grid-cols-[1fr_auto_auto_auto_auto_auto_auto] items-center gap-3 border-b px-4 py-3 text-sm last:border-0"
                 >
                   <div className="min-w-0">
                     <p className="truncate font-medium">{doc.title}</p>
                     <p className="truncate text-xs text-muted-foreground">{doc.userEmail ?? doc.userId}</p>
                   </div>
+                  <span className="w-20 text-center">
+                    {doc.visibility === "global" ? (
+                      <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">🌐 Global</span>
+                    ) : (
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">🔒 Private</span>
+                    )}
+                  </span>
                   <span className="w-24 text-center">
                     {doc.category ? (
                       <span className="rounded-full bg-accent px-2 py-0.5 text-xs">{doc.category}</span>
