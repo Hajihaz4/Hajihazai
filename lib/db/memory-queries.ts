@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, count, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "./index";
 import { userMemory } from "./schema";
 
@@ -117,23 +117,22 @@ export interface MemoryStats {
 }
 
 export async function memoryStats(userId: string): Promise<MemoryStats> {
-  const rows = await db
-    .select({ status: userMemory.status })
+  const [row] = await db
+    .select({
+      active: sql<number>`count(*) filter (where ${userMemory.status} = 'active')`.mapWith(Number),
+      pending: sql<number>`count(*) filter (where ${userMemory.status} = 'pending')`.mapWith(Number),
+      deleted: sql<number>`count(*) filter (where ${userMemory.status} = 'deleted')`.mapWith(Number),
+      total: count(),
+    })
     .from(userMemory)
     .where(eq(userMemory.userId, userId));
 
-  const stats: MemoryStats = {
-    active: 0,
-    pending: 0,
-    deleted: 0,
-    total: rows.length,
+  return {
+    active: row?.active ?? 0,
+    pending: row?.pending ?? 0,
+    deleted: row?.deleted ?? 0,
+    total: row?.total ?? 0,
   };
-  for (const r of rows) {
-    if (r.status === "active") stats.active++;
-    else if (r.status === "pending") stats.pending++;
-    else if (r.status === "deleted") stats.deleted++;
-  }
-  return stats;
 }
 
 /** Bulk approve — only the user's own PENDING rows transition to active. */

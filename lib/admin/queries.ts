@@ -4,6 +4,7 @@ import {
   admins,
   users,
   userProfiles,
+  sessions,
   projects,
   knowledgeDocument,
   knowledgeChunk,
@@ -282,6 +283,7 @@ export async function adminListUsersPage(opts?: { search?: string; page?: number
         lastLogin: userProfiles.lastLogin,
         isDisabled: userProfiles.isDisabled,
         isTerminated: userProfiles.isTerminated,
+        isSuspended: userProfiles.isSuspended,
       })
       .from(users)
       .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
@@ -350,7 +352,13 @@ export async function adminTerminateUser(userId: string, email: string): Promise
       .insert(blockedEmails)
       .values({ email: email.toLowerCase(), reason: "terminated" })
       .onConflictDoNothing();
+    // Revoke all active sessions immediately
+    await tx.delete(sessions).where(eq(sessions.userId, userId));
   });
+}
+
+export async function adminRevokeUserSessions(userId: string): Promise<void> {
+  await db.delete(sessions).where(eq(sessions.userId, userId));
 }
 
 export async function adminDeleteUser(userId: string): Promise<boolean> {

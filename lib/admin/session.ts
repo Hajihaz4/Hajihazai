@@ -23,7 +23,7 @@ export async function createAdminSession(
   const store = await cookies();
   store.set(ADMIN_COOKIE, token, {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: "strict",
     path: "/",
     secure,
     expires: expiresAt,

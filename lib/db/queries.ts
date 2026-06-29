@@ -9,7 +9,8 @@ export async function listConversations(userId: string) {
     .select()
     .from(conversations)
     .where(eq(conversations.userId, userId))
-    .orderBy(desc(conversations.updatedAt));
+    .orderBy(desc(conversations.updatedAt))
+    .limit(200);
 }
 
 export async function createConversation(
@@ -84,7 +85,8 @@ export async function listMessages(conversationId: string) {
     .select()
     .from(messages)
     .where(eq(messages.conversationId, conversationId))
-    .orderBy(asc(messages.createdAt));
+    .orderBy(asc(messages.createdAt))
+    .limit(200);
 }
 
 /**

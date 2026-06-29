@@ -86,58 +86,64 @@ export async function POST(req: Request) {
     return new Response(`message exceeds ${MESSAGE_MAX_CHARS} characters`, { status: 413 });
   }
 
-  const convo = await getConversation(session.user.id, conversationId);
+  // ── Phase 1: all independent lookups run in parallel ─────────────────────
+  // None of these depend on each other; they only need userId + message.
+  const effectiveBrainMode: BrainMode = brainMode === "smart" ? "smart" : "manual";
+  const resolvedBrainSlug = effectiveBrainMode === "smart" ? routeToBrain(message) : null;
+
+  const WRITE_INTENT_RE =
+    /\b(remember|save|update|store|add|don'?t forget)\b.{0,40}\b(this|that|it|knowledge|memory|information|info)\b/i;
+  const hasWriteIntent = !admin && WRITE_INTENT_RE.test(message) && !!session.user.email;
+
+  const [convo, memory, tool, brainForSmart, writePermitted] = await Promise.all([
+    getConversation(session.user.id, conversationId),
+    buildMemoryContext(session.user.id, { query: message }).catch((err) => {
+      console.warn("[chat] memory context failed:", err);
+      return { block: "", memories: [] as Awaited<ReturnType<typeof buildMemoryContext>>["memories"], count: 0, fallbackUsed: false };
+    }),
+    shouldCheckTools(message)
+      ? selectAndRunTool(session.user.id, message, { audit: true })
+      : Promise.resolve<ToolExecution>({ toolRequested: null, toolExecuted: false, toolResult: null, run: null }),
+    resolvedBrainSlug ? getBrainBySlug(resolvedBrainSlug).catch(() => null) : Promise.resolve(null),
+    hasWriteIntent
+      ? isKnowledgeWritePermitted(session.user.email!).catch(() => false)
+      : Promise.resolve(true),
+  ]);
+
   if (!convo) {
     return new Response("Not found", { status: 404 });
   }
 
   const projectId = convo.projectId ?? null;
-  let projectInstructions = "";
-  if (projectId) {
-    const project = await getProject(session.user.id, projectId);
-    projectInstructions = project?.instructions?.trim() ?? "";
-  }
+  const resolvedBrainId: string | null =
+    effectiveBrainMode === "smart"
+      ? (brainForSmart?.id ?? null)
+      : typeof clientBrainId === "string"
+      ? clientBrainId
+      : null;
 
-  let userMsg: Awaited<ReturnType<typeof addMessage>> | null = null;
-  if (!debug && !regenerate) {
-    userMsg = await addMessage({ conversationId, role: "user", content: message });
-  }
-
-  let memory: Awaited<ReturnType<typeof buildMemoryContext>>;
-  try {
-    memory = await buildMemoryContext(session.user.id, { query: message });
-  } catch (err) {
-    console.warn("[chat] memory context failed:", err);
-    memory = { block: "", memories: [], count: 0, fallbackUsed: false };
-  }
-
-  let resolvedBrainId: string | null = null;
-  let resolvedBrainSlug: string | null = null;
-  const effectiveBrainMode: BrainMode = brainMode === "smart" ? "smart" : "manual";
-
-  if (effectiveBrainMode === "smart") {
-    resolvedBrainSlug = routeToBrain(message);
-    const brain = await getBrainBySlug(resolvedBrainSlug).catch(() => null);
-    resolvedBrainId = brain?.id ?? null;
-  } else if (clientBrainId && typeof clientBrainId === "string") {
-    resolvedBrainId = clientBrainId;
-  }
-
-  let knowledge: Awaited<ReturnType<typeof buildKnowledgeContext>>;
-  try {
-    knowledge = await buildKnowledgeContext(session.user.id, {
+  // ── Phase 2: parallel lookups that depend on convo.projectId + brainId ──
+  // addMessage also runs here — ownership is confirmed above, and Phase 2
+  // completes before streaming starts so userMsg is available for the SSE event.
+  const [project, knowledge, history, userMsgResult] = await Promise.all([
+    projectId ? getProject(session.user.id, projectId) : Promise.resolve(null),
+    buildKnowledgeContext(session.user.id, {
       query: message,
       projectId,
       brainId: resolvedBrainId ?? undefined,
-    });
-  } catch (err) {
-    console.warn("[chat] knowledge context failed:", err);
-    knowledge = { block: "", chunks: [], count: 0 };
-  }
+    }).catch((err) => {
+      console.warn("[chat] knowledge context failed:", err);
+      return { block: "", chunks: [] as Awaited<ReturnType<typeof buildKnowledgeContext>>["chunks"], count: 0 };
+    }),
+    listRecentMessages(conversationId, 20),
+    !debug && !regenerate
+      ? addMessage({ conversationId, role: "user", content: message })
+      : Promise.resolve(null),
+  ]);
 
-  const tool: ToolExecution = shouldCheckTools(message)
-    ? await selectAndRunTool(session.user.id, message, { audit: true })
-    : { toolRequested: null, toolExecuted: false, toolResult: null, run: null };
+  const userMsg = userMsgResult;
+  const projectInstructions = project?.instructions?.trim() ?? "";
+
   let toolBlock = "";
   if (tool.toolExecuted && tool.toolResult != null) {
     let serialized = JSON.stringify(tool.toolResult);
@@ -147,26 +153,15 @@ export async function POST(req: Request) {
     toolBlock = wrapToolOutput(tool.toolRequested?.tool ?? "tool", serialized);
   }
 
-  const history = await listRecentMessages(conversationId, 20);
+  const writeIntentBlock = hasWriteIntent && !writePermitted
+    ? "SYSTEM NOTICE: This user does NOT have permission to update system knowledge. If they ask you to save, remember, update, or store any information to your knowledge base or memory, respond with: \"You do not have permission to update system knowledge. Please contact an admin.\" Do not pretend to save anything."
+    : "";
+
   const historyMessages: ChatMessage[] = history.map((m) => ({
     role: m.role,
     content: m.content,
   }));
   if (debug) historyMessages.push({ role: "user", content: message.trim() });
-
-  // Warn the AI when write-intent is detected for unauthorized users
-  const WRITE_INTENT_RE =
-    /\b(remember|save|update|store|add|don'?t forget)\b.{0,40}\b(this|that|it|knowledge|memory|information|info)\b/i;
-  let writeIntentBlock = "";
-  if (!admin && WRITE_INTENT_RE.test(message)) {
-    const permitted = session.user.email
-      ? await isKnowledgeWritePermitted(session.user.email).catch(() => false)
-      : false;
-    if (!permitted) {
-      writeIntentBlock =
-        "SYSTEM NOTICE: This user does NOT have permission to update system knowledge. If they ask you to save, remember, update, or store any information to your knowledge base or memory, respond with: \"You do not have permission to update system knowledge. Please contact an admin.\" Do not pretend to save anything.";
-    }
-  }
 
   const chatMessages: ChatMessage[] = [
     { role: "system", content: HAJI_PERSONA.system },

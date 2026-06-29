@@ -1,5 +1,5 @@
 import { requireAdmin } from "@/lib/admin/session";
-import { adminSuspendUser, adminRestoreUser } from "@/lib/admin/queries";
+import { adminSuspendUser, adminRestoreUser, adminRevokeUserSessions } from "@/lib/admin/queries";
 
 export async function POST(
   req: Request,
@@ -14,6 +14,8 @@ export async function POST(
 
   if (suspend) {
     await adminSuspendUser(id);
+    // Revoke active sessions so the effect is immediate
+    void adminRevokeUserSessions(id).catch(() => null);
   } else {
     await adminRestoreUser(id);
   }

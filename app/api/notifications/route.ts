@@ -15,7 +15,7 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => ({}));
   const id = body.id;
-  if (!id) return Response.json({ error: "id required" }, { status: 400 });
+  if (typeof id !== "string" || !id) return Response.json({ error: "id required" }, { status: 400 });
 
   await markNotificationRead(id, session.user.id);
   return Response.json({ ok: true });

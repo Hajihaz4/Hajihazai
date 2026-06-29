@@ -102,7 +102,10 @@ export const conversations = pgTable(
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
   },
-  (t) => [index("conversation_user_idx").on(t.userId)],
+  (t) => [
+    index("conversation_user_idx").on(t.userId),
+    index("conversation_project_idx").on(t.projectId),
+  ],
 );
 
 export const messages = pgTable(
@@ -256,7 +259,11 @@ export const knowledgeDocument = pgTable(
     createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updatedAt", { mode: "date" }).notNull().defaultNow(),
   },
-  (t) => [index("knowledge_document_user_idx").on(t.userId)],
+  (t) => [
+    index("knowledge_document_user_idx").on(t.userId),
+    index("knowledge_document_project_idx").on(t.projectId),
+    index("knowledge_document_brain_idx").on(t.brainId),
+  ],
 );
 
 export const knowledgeDocumentRelations = relations(
@@ -419,6 +426,7 @@ export const userProfiles = pgTable(
     uniqueIndex("user_profiles_google_id_idx").on(t.googleId),
     uniqueIndex("user_profiles_email_idx").on(t.email),
     index("user_profiles_username_idx").on(t.username),
+    index("user_profiles_created_idx").on(t.createdAt),
   ],
 );
 
@@ -484,7 +492,10 @@ export const passwordResetTokens = pgTable(
     usedAt: timestamp("used_at", { mode: "date" }),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   },
-  (t) => [index("password_reset_user_idx").on(t.userId)],
+  (t) => [
+    index("password_reset_user_idx").on(t.userId),
+    index("password_reset_expires_idx").on(t.expiresAt),
+  ],
 );
 
 export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
@@ -642,7 +653,10 @@ export const notifications = pgTable(
     createdBy: text("created_by"),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   },
-  (t) => [index("notifications_created_idx").on(t.createdAt)],
+  (t) => [
+    index("notifications_created_idx").on(t.createdAt),
+    index("notifications_sent_idx").on(t.sentAt),
+  ],
 );
 
 export type Notification = typeof notifications.$inferSelect;
@@ -663,7 +677,10 @@ export const userNotifications = pgTable(
     readAt: timestamp("read_at", { mode: "date" }),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   },
-  (t) => [index("user_notifications_user_idx").on(t.userId)],
+  (t) => [
+    index("user_notifications_user_idx").on(t.userId),
+    index("user_notifications_notification_idx").on(t.notificationId),
+  ],
 );
 
 export type UserNotification = typeof userNotifications.$inferSelect;

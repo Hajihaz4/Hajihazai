@@ -6,5 +6,7 @@ export async function GET() {
   if (!session?.user?.id) return new Response("Unauthorized", { status: 401 });
 
   const brains = await listBrainsForPicker();
-  return Response.json({ brains });
+  return Response.json({ brains }, {
+    headers: { "Cache-Control": "public, max-age=300, stale-while-revalidate=60" },
+  });
 }

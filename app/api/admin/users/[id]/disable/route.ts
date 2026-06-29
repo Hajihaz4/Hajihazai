@@ -1,5 +1,5 @@
 import { requireAdmin } from "@/lib/admin/session";
-import { adminSetUserDisabled, adminGetUserDetail } from "@/lib/admin/queries";
+import { adminSetUserDisabled, adminGetUserDetail, adminRevokeUserSessions } from "@/lib/admin/queries";
 import { syncEventToSheets } from "@/lib/google-sheets";
 
 export async function POST(
@@ -15,6 +15,9 @@ export async function POST(
 
   const ok = await adminSetUserDisabled(id, disabled);
   if (!ok) return Response.json({ error: "User not found" }, { status: 404 });
+
+  // Revoke sessions immediately when disabling
+  if (disabled) void adminRevokeUserSessions(id).catch(() => null);
 
   const user = await adminGetUserDetail(id).catch(() => null);
   if (user?.email) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 /* ── Types ────────────────────────────────────────────────────── */
 
@@ -658,14 +658,14 @@ export default function AdminPortal() {
   const uniqueCategories = [...new Set(knowledge.map((d) => d.category).filter(Boolean))] as string[];
   const uniqueProjects = [...new Map(knowledge.filter((d) => d.projectId && d.projectName).map((d) => [d.projectId, { id: d.projectId!, name: d.projectName! }])).values()];
 
-  const filteredKnowledge = knowledge.filter((d) => {
+  const filteredKnowledge = useMemo(() => knowledge.filter((d) => {
     if (kSearch && !d.title.toLowerCase().includes(kSearch.toLowerCase())) return false;
     if (kCatFilter && d.category !== kCatFilter) return false;
     if (kProjFilter && d.projectId !== kProjFilter) return false;
     if (kBrainFilter && d.brainId !== kBrainFilter) return false;
     if (kVisFilter && d.visibility !== kVisFilter) return false;
     return true;
-  });
+  }), [knowledge, kSearch, kCatFilter, kProjFilter, kBrainFilter, kVisFilter]);
 
   /* ── style helpers ──────────────────────────────────────────── */
 
