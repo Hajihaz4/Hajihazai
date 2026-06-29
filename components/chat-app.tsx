@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Bug, Download, Menu, PlusCircle } from "lucide-react";
 import Sidebar from "./sidebar";
 import Chat from "./chat";
@@ -115,21 +115,21 @@ export default function ChatApp({
   // Toast
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  function notify(message: string) {
+  const notify = useCallback((message: string) => {
     setToast(message);
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 1800);
-  }
+  }, []);
 
   function changeLevel(newLevel: string) {
     setLevel(newLevel);
     try { localStorage.setItem("hh-level", newLevel); } catch { /**/ }
   }
 
-  function stopGeneration() {
+  const stopGeneration = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
-  }
+  }, []);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -212,7 +212,7 @@ export default function ChatApp({
     } catch { /**/ }
   }
 
-  async function newProject() {
+  const newProject = useCallback(async () => {
     const name = window.prompt("Project name");
     if (!name?.trim()) return;
     const res = await fetch("/api/projects", {
@@ -225,7 +225,7 @@ export default function ChatApp({
     if (data.project) {
       setProjects((p) => [{ id: data.project.id, name: data.project.name }, ...p]);
     }
-  }
+  }, []);
 
   async function refreshLevels() {
     try {
@@ -243,7 +243,7 @@ export default function ChatApp({
     } catch { /**/ }
   }
 
-  async function openConversation(id: string) {
+  const openConversation = useCallback(async (id: string) => {
     setActiveId(id);
     setSidebarOpen(false);
     setLoading(true);
@@ -260,16 +260,16 @@ export default function ChatApp({
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
-  async function newChat() {
+  const newChat = useCallback(async () => {
     const res = await fetch("/api/conversations", { method: "POST" });
     const convo: Conv = await res.json();
     setConversations((p) => [convo, ...p]);
     setActiveId(convo.id);
     setMessages([]);
     setSidebarOpen(false);
-  }
+  }, []);
 
   async function confirmDelete() {
     if (!pendingDelete) return;
@@ -280,7 +280,7 @@ export default function ChatApp({
     if (activeId === id) { setActiveId(null); setMessages([]); }
   }
 
-  async function handleRename(id: string, title: string) {
+  const handleRename = useCallback(async (id: string, title: string) => {
     if (!title.trim()) return;
     setConversations((p) => p.map((c) => (c.id === id ? { ...c, title } : c)));
     await fetch(`/api/conversations/${id}`, {
@@ -288,7 +288,7 @@ export default function ChatApp({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title }),
     }).catch(() => {});
-  }
+  }, []);
 
   function exportConversation(format: "md" | "txt" | "pdf") {
     if (!activeId || messages.length === 0) return;
@@ -333,15 +333,15 @@ h1{font-size:1.4rem;margin-bottom:24px;border-bottom:1px solid #e5e7eb;padding-b
 
   /* ── message actions ── */
 
-  async function copyMessage(text: string) {
+  const copyMessage = useCallback(async (text: string) => {
     try { await navigator.clipboard.writeText(text); notify("Copied to clipboard"); }
     catch { notify("Copy failed"); }
-  }
+  }, [notify]);
 
-  function deleteMessage(msg: Msg) {
+  const deleteMessage = useCallback((msg: Msg) => {
     setMessages((p) => p.filter((m) => m.id !== msg.id));
     if (msg.dbId) void fetch(`/api/messages/${msg.dbId}`, { method: "DELETE" }).catch(() => {});
-  }
+  }, []);
 
   function retryMessage(msg: Msg) {
     if (msg.error) {
@@ -496,6 +496,17 @@ h1{font-size:1.4rem;margin-bottom:24px;border-bottom:1px solid #e5e7eb;padding-b
     }
   }
 
+  const handleSelectBrain = useCallback((id: string | null) => {
+    setSelectedBrainId(id);
+    try { if (id) localStorage.setItem("hh-brain-id", id); else localStorage.removeItem("hh-brain-id"); } catch { /**/ }
+  }, []);
+
+  const handleToggleBrainMode = useCallback(() => {
+    setBrainMode((m) => (m === "manual" ? "smart" : "manual"));
+  }, []);
+
+  const handleSidebarClose = useCallback(() => setSidebarOpen(false), []);
+
   return (
     <div className="flex h-dvh overflow-hidden">
       <Sidebar
@@ -510,7 +521,7 @@ h1{font-size:1.4rem;margin-bottom:24px;border-bottom:1px solid #e5e7eb;padding-b
         onRename={handleRename}
         onToast={notify}
         open={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
+        onClose={handleSidebarClose}
         searchRef={sidebarSearchRef}
       />
 
@@ -632,11 +643,8 @@ h1{font-size:1.4rem;margin-bottom:24px;border-bottom:1px solid #e5e7eb;padding-b
           brains={brains}
           selectedBrainId={selectedBrainId}
           brainMode={brainMode}
-          onSelectBrain={(id) => {
-            setSelectedBrainId(id);
-            try { if (id) localStorage.setItem("hh-brain-id", id); else localStorage.removeItem("hh-brain-id"); } catch { /**/ }
-          }}
-          onToggleBrainMode={() => setBrainMode((m) => m === "manual" ? "smart" : "manual")}
+          onSelectBrain={handleSelectBrain}
+          onToggleBrainMode={handleToggleBrainMode}
         />
       </div>
 

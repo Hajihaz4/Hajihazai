@@ -14,6 +14,7 @@ export async function sendPasswordResetEmail(
   resetUrl: string,
 ): Promise<SendResult> {
   // TODO: wire a real provider here (Resend/SMTP) once configured.
-  console.log(`[email] password reset requested for ${to} -> ${resetUrl}`);
+  console.log(`[email] password reset link generated for ${to}`);
+  void resetUrl;
   return { delivered: false };
 }

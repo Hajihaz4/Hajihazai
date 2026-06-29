@@ -41,7 +41,9 @@ export async function POST(req: Request) {
     return new Response("Unauthorized", { status: 401 });
   }
 
+  const admin = isAdmin(session.user.email);
   const debug =
+    admin &&
     ["1", "true"].includes(new URL(req.url).searchParams.get("debug") ?? "");
 
   const limited = rateLimitResponse(
@@ -63,7 +65,6 @@ export async function POST(req: Request) {
   } else if (typeof modelId === "string" && isModelUsable(modelId)) {
     preferredModelId = modelId;
   }
-  const admin = isAdmin(session.user.email);
   if (message.length > MESSAGE_MAX_CHARS) {
     return new Response(`message exceeds ${MESSAGE_MAX_CHARS} characters`, { status: 413 });
   }
@@ -151,17 +152,39 @@ export async function POST(req: Request) {
   const streamResult = await routeChatStream(chatMessages, { preferredModelId });
   const startMs = Date.now();
 
+  const CHUNK_TIMEOUT_MS = 30_000;
+
   const body = new ReadableStream({
     async start(controller) {
       let fullText = "";
+      const iter = streamResult.stream[Symbol.asyncIterator]();
       try {
-        for await (const chunk of streamResult.stream) {
-          fullText += chunk;
-          controller.enqueue(sse({ t: "chunk", text: chunk }));
+        while (true) {
+          const next = await Promise.race([
+            iter.next(),
+            new Promise<"timeout">((resolve) =>
+              setTimeout(() => resolve("timeout"), CHUNK_TIMEOUT_MS),
+            ),
+          ]);
+          if (next === "timeout") {
+            throw Object.assign(new Error("provider timeout"), { timedOut: true });
+          }
+          if (next.done) break;
+          fullText += next.value;
+          controller.enqueue(sse({ t: "chunk", text: next.value }));
         }
       } catch (err) {
-        console.error("[chat] stream error:", err);
-        controller.enqueue(sse({ t: "error", message: "Stream interrupted" }));
+        if (!debug && fullText.trim()) {
+          await addMessage({
+            conversationId,
+            role: "assistant",
+            content: fullText.trimEnd() + "\n\n*[Response interrupted]*",
+            modelId: streamResult.modelId,
+          }).catch(() => {});
+        }
+        const isTimeout = (err as { timedOut?: boolean }).timedOut === true;
+        console.error("[chat] stream error:", isTimeout ? "provider timeout" : err);
+        controller.enqueue(sse({ t: "error", message: isTimeout ? "Request timed out" : "Stream interrupted" }));
         controller.close();
         return;
       }
@@ -180,7 +203,7 @@ export async function POST(req: Request) {
         assistantMsgId = assistantMsg.id;
         if (convo.title === "New chat") {
           title = message.trim().slice(0, 60);
-          await setConversationTitle(conversationId, title);
+          await setConversationTitle(session.user.id, conversationId, title);
         }
       }
 

@@ -23,7 +23,7 @@ export default function ProfileMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Account menu"
-        className="flex size-9 items-center justify-center overflow-hidden rounded-full border hover:bg-accent"
+        className="flex size-11 items-center justify-center overflow-hidden rounded-full border hover:bg-accent md:size-9"
       >
         {image ? (
           // eslint-disable-next-line @next/next/no-img-element

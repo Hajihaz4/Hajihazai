@@ -280,7 +280,7 @@ function ActionButton({
       onClick={onClick}
       aria-label={label}
       title={label}
-      className={`flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent ${
+      className={`flex size-11 items-center justify-center rounded-md text-muted-foreground hover:bg-accent md:size-7 ${
         danger ? "hover:text-destructive" : "hover:text-foreground"
       }`}
     >

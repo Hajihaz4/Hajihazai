@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   Brain,
   ChevronRight,
@@ -160,7 +160,7 @@ function ConvRow({
 
 const MAX_PINNED = 20;
 
-export default function Sidebar({
+const Sidebar = memo(function Sidebar({
   conversations,
   projects,
   brains,
@@ -289,21 +289,31 @@ export default function Sidebar({
     setInlineRenameId(null);
   }
 
-  // Filter by search query
   const q = searchQuery.toLowerCase().trim();
-  const filtered = q
-    ? conversations.filter((c) => c.title.toLowerCase().includes(q))
-    : conversations;
 
-  const pinnedConvs = filtered.filter((c) => pinned.has(c.id));
-  const unpinnedConvs = filtered.filter((c) => !pinned.has(c.id));
-  const dateGroups = groupByDate(unpinnedConvs);
+  const filteredConversations = useMemo(
+    () => (q ? conversations.filter((c) => c.title.toLowerCase().includes(q)) : conversations),
+    [conversations, q],
+  );
 
-  const sorted = [...projects].sort((a, b) => {
-    if (a.isSystem && !b.isSystem) return -1;
-    if (!a.isSystem && b.isSystem) return 1;
-    return a.name.localeCompare(b.name);
-  });
+  const pinnedConvs = useMemo(
+    () => filteredConversations.filter((c) => pinned.has(c.id)),
+    [filteredConversations, pinned],
+  );
+  const unpinnedConvs = useMemo(
+    () => filteredConversations.filter((c) => !pinned.has(c.id)),
+    [filteredConversations, pinned],
+  );
+  const dateGroups = useMemo(() => groupByDate(unpinnedConvs), [unpinnedConvs]);
+  const sorted = useMemo(
+    () =>
+      [...projects].sort((a, b) => {
+        if (a.isSystem && !b.isSystem) return -1;
+        if (!a.isSystem && b.isSystem) return 1;
+        return a.name.localeCompare(b.name);
+      }),
+    [projects],
+  );
 
   return (
     <>
@@ -355,7 +365,7 @@ export default function Sidebar({
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search… ⌘K"
               aria-label="Search conversations"
-              className="w-full rounded-lg border bg-muted/40 py-2 pl-8 pr-3 text-sm outline-none focus:bg-background focus:ring-2 focus:ring-ring"
+              className="w-full rounded-lg border bg-muted/40 py-2 pl-8 pr-3 text-base outline-none focus:bg-background focus:ring-2 focus:ring-ring sm:text-sm"
             />
           </div>
         </div>
@@ -524,7 +534,7 @@ export default function Sidebar({
               )}
 
               {/* Search: flat results (no date groups) */}
-              {q && filtered.length === 0 ? (
+              {q && filteredConversations.length === 0 ? (
                 <p className="px-3 py-4 text-center text-sm text-muted-foreground">
                   No results for "{searchQuery}"
                 </p>
@@ -587,4 +597,5 @@ export default function Sidebar({
       </aside>
     </>
   );
-}
+});
+export default Sidebar;

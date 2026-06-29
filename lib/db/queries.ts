@@ -56,11 +56,11 @@ export async function deleteConversation(userId: string, id: string) {
     .where(and(eq(conversations.id, id), eq(conversations.userId, userId)));
 }
 
-export async function setConversationTitle(id: string, title: string) {
+export async function setConversationTitle(userId: string, id: string, title: string) {
   await db
     .update(conversations)
     .set({ title, updatedAt: new Date() })
-    .where(eq(conversations.id, id));
+    .where(and(eq(conversations.id, id), eq(conversations.userId, userId)));
 }
 
 /** Rename a conversation the user owns (ownership-scoped). Returns null if not owned. */
