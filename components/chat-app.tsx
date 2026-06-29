@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bug, Menu, PlusCircle } from "lucide-react";
+import { Bug, Download, Menu, PlusCircle } from "lucide-react";
 import Sidebar from "./sidebar";
 import Chat from "./chat";
 import Modal from "./modal";
@@ -43,11 +43,25 @@ export type Msg = {
   retryText?: string;
   meta?: MsgMeta | null;
   streaming?: boolean;
+  isNew?: boolean;
 };
 type User = { name?: string | null; email?: string | null; image?: string | null };
 
 const CHAT_TIMEOUT_MS = 60_000;
 const uuid = () => crypto.randomUUID();
+
+function escHtml(s: string) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export default function ChatApp({
   user,
@@ -64,7 +78,6 @@ export default function ChatApp({
 }) {
   const [conversations, setConversations] = useState<Conv[]>(initialConversations);
   const [activeId, setActiveId] = useState<string | null>(
-    // Open a specific chat when arriving from a project workspace (?c=…).
     (openConversationId &&
       initialConversations.some((c) => c.id === openConversationId)
       ? openConversationId
@@ -78,8 +91,6 @@ export default function ChatApp({
   const [projects, setProjects] = useState<Proj[]>([]);
 
   const [levels, setLevels] = useState<LevelOption[]>(initialLevels);
-  // Use server value as initial to avoid SSR/client hydration mismatch;
-  // restore from localStorage in useEffect below.
   const [level, setLevel] = useState<string>(
     initialLevels.find((l) => l.available)?.level ?? "medium",
   );
@@ -87,27 +98,21 @@ export default function ChatApp({
   const [isGenerating, setIsGenerating] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
-  function changeLevel(newLevel: string) {
-    setLevel(newLevel);
-    try { localStorage.setItem("hh-level", newLevel); } catch { /* ignore */ }
-  }
+  // Refs for keyboard shortcuts
+  const sidebarSearchRef = useRef<HTMLInputElement | null>(null);
 
-  function stopGeneration() {
-    abortRef.current?.abort();
-    abortRef.current = null;
-  }
+  // Export dropdown state
+  const [isExportOpen, setIsExportOpen] = useState(false);
 
   // Brain system state
   const [brains, setBrains] = useState<BrainOption[]>([]);
   const [selectedBrainId, setSelectedBrainId] = useState<string | null>(null);
   const [brainMode, setBrainMode] = useState<BrainMode>("manual");
 
-  // Conversation management modals.
+  // Delete confirmation modal
   const [pendingDelete, setPendingDelete] = useState<Conv | null>(null);
-  const [renaming, setRenaming] = useState<Conv | null>(null);
-  const [renameValue, setRenameValue] = useState("");
 
-  // Toast.
+  // Toast
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   function notify(message: string) {
@@ -116,18 +121,55 @@ export default function ChatApp({
     toastTimer.current = setTimeout(() => setToast(null), 1800);
   }
 
-  // Restore localStorage preferences client-side (avoids SSR/hydration mismatch).
+  function changeLevel(newLevel: string) {
+    setLevel(newLevel);
+    try { localStorage.setItem("hh-level", newLevel); } catch { /**/ }
+  }
+
+  function stopGeneration() {
+    abortRef.current?.abort();
+    abortRef.current = null;
+  }
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta) return;
+
+      if (e.key === "k") {
+        e.preventDefault();
+        setSidebarOpen(true);
+        // rAF x2 to wait for sidebar slide-in before focusing
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          sidebarSearchRef.current?.focus();
+        }));
+      } else if (e.key === "n") {
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA") return;
+        e.preventDefault();
+        void newChat();
+      } else if (e.key === "b") {
+        e.preventDefault();
+        setSidebarOpen((o) => !o);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Restore level from localStorage after mount
   useEffect(() => {
     try {
       const savedLevel = localStorage.getItem("hh-level");
       if (savedLevel && initialLevels.some((l) => l.level === savedLevel && l.available)) {
         setLevel(savedLevel);
       }
-    } catch { /* ignore */ }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    } catch { /**/ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Initial conversation + live health refresh (hides failing models).
   useEffect(() => {
     if (activeId) void openConversation(activeId);
     void refreshLevels();
@@ -147,17 +189,14 @@ export default function ChatApp({
         }),
       );
       setBrains(loaded);
-      // Restore persisted brain, or default to haji-core.
       try {
         const savedBrainId = localStorage.getItem("hh-brain-id");
         const match = savedBrainId && loaded.find((b) => b.id === savedBrainId);
         if (match) { setSelectedBrainId(match.id); return; }
-      } catch { /* ignore */ }
+      } catch { /**/ }
       const hajiCore = loaded.find((b) => b.slug === "haji-core");
       if (hajiCore) setSelectedBrainId(hajiCore.id);
-    } catch {
-      /* best-effort */
-    }
+    } catch { /**/ }
   }
 
   async function loadProjects() {
@@ -167,14 +206,10 @@ export default function ChatApp({
       const data = await res.json();
       setProjects(
         (data.projects ?? []).map((p: { id: string; name: string; isSystem?: boolean }) => ({
-          id: p.id,
-          name: p.name,
-          isSystem: p.isSystem ?? false,
+          id: p.id, name: p.name, isSystem: p.isSystem ?? false,
         })),
       );
-    } catch {
-      /* best-effort */
-    }
+    } catch { /**/ }
   }
 
   async function newProject() {
@@ -200,20 +235,12 @@ export default function ChatApp({
       if (Array.isArray(data.levels) && data.levels.length > 0) {
         setLevels(data.levels);
         setLevel((cur) => {
-          const stillOk = data.levels.find(
-            (l: LevelOption) => l.level === cur && l.available,
-          );
+          const stillOk = data.levels.find((l: LevelOption) => l.level === cur && l.available);
           if (stillOk) return cur;
-          return (
-            data.default ??
-            data.levels.find((l: LevelOption) => l.available)?.level ??
-            cur
-          );
+          return data.default ?? data.levels.find((l: LevelOption) => l.available)?.level ?? cur;
         });
       }
-    } catch {
-      /* health endpoint best-effort — keep server-provided levels */
-    }
+    } catch { /**/ }
   }
 
   async function openConversation(id: string) {
@@ -225,10 +252,8 @@ export default function ChatApp({
       const data = await res.json();
       const loaded: Msg[] = (data.messages ?? []).map(
         (m: { id: string; role: Msg["role"]; content: string }) => ({
-          id: m.id,
-          dbId: m.id,
-          role: m.role,
-          content: m.content,
+          id: m.id, dbId: m.id, role: m.role, content: m.content,
+          // isNew intentionally omitted → no animation on loaded messages
         }),
       );
       setMessages(loaded);
@@ -252,18 +277,11 @@ export default function ChatApp({
     setPendingDelete(null);
     await fetch(`/api/conversations/${id}`, { method: "DELETE" });
     setConversations((p) => p.filter((c) => c.id !== id));
-    if (activeId === id) {
-      setActiveId(null);
-      setMessages([]);
-    }
+    if (activeId === id) { setActiveId(null); setMessages([]); }
   }
 
-  async function saveRename() {
-    if (!renaming) return;
-    const id = renaming.id;
-    const title = renameValue.trim();
-    setRenaming(null);
-    if (!title) return;
+  async function handleRename(id: string, title: string) {
+    if (!title.trim()) return;
     setConversations((p) => p.map((c) => (c.id === id ? { ...c, title } : c)));
     await fetch(`/api/conversations/${id}`, {
       method: "PATCH",
@@ -272,45 +290,73 @@ export default function ChatApp({
     }).catch(() => {});
   }
 
-  /* ---------------------------- message actions --------------------------- */
+  function exportConversation(format: "md" | "txt" | "pdf") {
+    if (!activeId || messages.length === 0) return;
+    setIsExportOpen(false);
+    const title = conversations.find((c) => c.id === activeId)?.title ?? "Conversation";
+    const slug = title.replace(/[^a-z0-9]+/gi, "-").toLowerCase().slice(0, 60);
+
+    if (format === "md") {
+      const lines = [`# ${title}\n`];
+      for (const m of messages) {
+        if (m.role === "user") lines.push(`**You:** ${m.content}\n`);
+        else if (m.role === "assistant") lines.push(`**HajiHaz:** ${m.content}\n`);
+      }
+      downloadBlob(new Blob([lines.join("\n")], { type: "text/markdown" }), `${slug}.md`);
+    } else if (format === "txt") {
+      const lines = [`${title}\n${"=".repeat(title.length)}\n`];
+      for (const m of messages) {
+        if (m.role === "user") lines.push(`You: ${m.content}\n`);
+        else if (m.role === "assistant") lines.push(`HajiHaz: ${m.content}\n`);
+      }
+      downloadBlob(new Blob([lines.join("\n")], { type: "text/plain" }), `${slug}.txt`);
+    } else if (format === "pdf") {
+      const body = messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) =>
+          m.role === "user"
+            ? `<div class="msg user"><strong>You</strong><p>${escHtml(m.content)}</p></div>`
+            : `<div class="msg ai"><strong>HajiHaz</strong><p>${escHtml(m.content)}</p></div>`,
+        )
+        .join("");
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(title)}</title>
+<style>body{font-family:system-ui,sans-serif;max-width:720px;margin:0 auto;padding:32px;color:#111}
+h1{font-size:1.4rem;margin-bottom:24px;border-bottom:1px solid #e5e7eb;padding-bottom:12px}
+.msg{margin:16px 0;padding:14px 16px;border-radius:10px;line-height:1.6}
+.msg strong{display:block;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;opacity:0.6}
+.msg p{margin:0;white-space:pre-wrap}.user{background:#eff6ff}.ai{background:#f9fafb}
+</style></head><body><h1>${escHtml(title)}</h1>${body}</body></html>`;
+      const win = window.open("", "_blank");
+      if (win) { win.document.write(html); win.document.close(); setTimeout(() => win.print(), 250); }
+    }
+  }
+
+  /* ── message actions ── */
 
   async function copyMessage(text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      notify("Copied to clipboard");
-    } catch {
-      notify("Copy failed");
-    }
+    try { await navigator.clipboard.writeText(text); notify("Copied to clipboard"); }
+    catch { notify("Copy failed"); }
   }
 
   function deleteMessage(msg: Msg) {
     setMessages((p) => p.filter((m) => m.id !== msg.id));
-    if (msg.dbId) {
-      void fetch(`/api/messages/${msg.dbId}`, { method: "DELETE" }).catch(() => {});
-    }
+    if (msg.dbId) void fetch(`/api/messages/${msg.dbId}`, { method: "DELETE" }).catch(() => {});
   }
 
   function retryMessage(msg: Msg) {
-    // A failed send → resend the original user text.
     if (msg.error) {
       setMessages((p) => p.filter((m) => m.id !== msg.id));
       void runChat(msg.retryText ?? "", {});
       return;
     }
-    // An assistant reply → regenerate from the preceding user message.
     const idx = messages.findIndex((m) => m.id === msg.id);
     if (idx < 0) return;
     let priorText = "";
     for (let i = idx - 1; i >= 0; i--) {
-      if (messages[i].role === "user") {
-        priorText = messages[i].content;
-        break;
-      }
+      if (messages[i].role === "user") { priorText = messages[i].content; break; }
     }
     if (!priorText) return;
-    if (msg.dbId) {
-      void fetch(`/api/messages/${msg.dbId}`, { method: "DELETE" }).catch(() => {});
-    }
+    if (msg.dbId) void fetch(`/api/messages/${msg.dbId}`, { method: "DELETE" }).catch(() => {});
     setMessages((p) => p.filter((m) => m.id !== msg.id));
     void runChat(priorText, { regenerate: true });
   }
@@ -320,14 +366,11 @@ export default function ChatApp({
     if (!text || sending) return;
     setInput("");
     const localId = uuid();
-    setMessages((p) => [...p, { id: localId, role: "user", content: text }]);
+    setMessages((p) => [...p, { id: localId, role: "user", content: text, isNew: true }]);
     void runChat(text, { userLocalId: localId });
   }
 
-  async function runChat(
-    text: string,
-    opts: { userLocalId?: string; regenerate?: boolean },
-  ) {
+  async function runChat(text: string, opts: { userLocalId?: string; regenerate?: boolean }) {
     if (sending) return;
     setSending(true);
     setIsGenerating(true);
@@ -388,11 +431,10 @@ export default function ChatApp({
 
             if (event.t === "chunk") {
               if (!addedStreamMsg) {
-                // First token: hide dots, show assistant message
                 setSending(false);
                 setMessages((p) => [
                   ...p,
-                  { id: streamMsgId, role: "assistant" as const, content: event.text, streaming: true },
+                  { id: streamMsgId, role: "assistant" as const, content: event.text, streaming: true, isNew: true },
                 ]);
                 addedStreamMsg = true;
               } else {
@@ -403,15 +445,11 @@ export default function ChatApp({
                 );
               }
             } else if (event.t === "done") {
-              // Patch user message with DB id.
               if (opts.userLocalId && event.userMessageId) {
                 setMessages((p) =>
-                  p.map((m) =>
-                    m.id === opts.userLocalId ? { ...m, dbId: event.userMessageId } : m,
-                  ),
+                  p.map((m) => m.id === opts.userLocalId ? { ...m, dbId: event.userMessageId } : m),
                 );
               }
-              // Finalize assistant message.
               setMessages((p) =>
                 p.map((m) =>
                   m.id === streamMsgId
@@ -428,10 +466,10 @@ export default function ChatApp({
               setSending(false);
               setMessages((p) => [
                 ...p,
-                { id: uuid(), role: "assistant" as const, content: "⚠️ Something went wrong. Please try again.", error: true, retryText: text },
+                { id: uuid(), role: "assistant" as const, content: "⚠️ Something went wrong. Please try again.", error: true, retryText: text, isNew: true },
               ]);
             }
-          } catch { /* skip malformed SSE event */ }
+          } catch { /**/ }
         }
       }
     } catch (err) {
@@ -439,20 +477,17 @@ export default function ChatApp({
       setMessages((p) => [
         ...p,
         {
-          id: uuid(),
-          role: "assistant",
+          id: uuid(), role: "assistant",
           content: aborted
             ? "⏱️ The request timed out. Please try again."
             : "⚠️ Couldn't reach HajiHaz. Check your connection and try again.",
-          error: true,
-          retryText: text,
+          error: true, retryText: text, isNew: true,
         },
       ]);
     } finally {
       setSending(false);
       setIsGenerating(false);
       abortRef.current = null;
-      // If stream ended without completing (mid-stream error/stop), clear cursor.
       if (addedStreamMsg) {
         setMessages((p) =>
           p.map((m) => (m.id === streamMsgId && m.streaming ? { ...m, streaming: false } : m)),
@@ -471,16 +506,12 @@ export default function ChatApp({
         onSelect={openConversation}
         onNew={newChat}
         onNewProject={newProject}
-        onDelete={(id) =>
-          setPendingDelete(conversations.find((c) => c.id === id) ?? null)
-        }
-        onRename={(id) => {
-          const c = conversations.find((x) => x.id === id) ?? null;
-          setRenaming(c);
-          setRenameValue(c?.title ?? "");
-        }}
+        onDelete={(id) => setPendingDelete(conversations.find((c) => c.id === id) ?? null)}
+        onRename={handleRename}
+        onToast={notify}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        searchRef={sidebarSearchRef}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -509,9 +540,7 @@ export default function ChatApp({
             ) : null}
             <div className="min-w-0 text-sm">
               <div className="truncate font-medium leading-tight">{user.name}</div>
-              <div className="truncate text-xs leading-tight text-muted-foreground">
-                {user.email}
-              </div>
+              <div className="truncate text-xs leading-tight text-muted-foreground">{user.email}</div>
             </div>
           </div>
 
@@ -531,9 +560,44 @@ export default function ChatApp({
               </button>
             ) : null}
 
-            <label className="sr-only" htmlFor="level-select">
-              Response quality level
-            </label>
+            {/* Export button — only when there's a conversation with messages */}
+            {activeId && messages.length > 0 ? (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setIsExportOpen((o) => !o)}
+                  aria-label="Export conversation"
+                  title="Export conversation"
+                  className="flex size-10 shrink-0 items-center justify-center rounded-lg border text-muted-foreground hover:bg-accent hover:text-foreground sm:size-9"
+                >
+                  <Download className="size-4" />
+                </button>
+                {isExportOpen ? (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      aria-hidden="true"
+                      onClick={() => setIsExportOpen(false)}
+                    />
+                    <div className="absolute right-0 z-50 mt-1.5 w-44 overflow-hidden rounded-lg border bg-popover py-1 shadow-lg">
+                      {(["md", "txt", "pdf"] as const).map((fmt) => (
+                        <button
+                          key={fmt}
+                          onClick={() => exportConversation(fmt)}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
+                        >
+                          {fmt === "md" && "Markdown (.md)"}
+                          {fmt === "txt" && "Plain Text (.txt)"}
+                          {fmt === "pdf" && "PDF (print)"}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+
+            <label className="sr-only" htmlFor="level-select">Response quality level</label>
             <select
               id="level-select"
               value={level}
@@ -542,8 +606,7 @@ export default function ChatApp({
             >
               {levels.map((l) => (
                 <option key={l.level} value={l.level} disabled={!l.available}>
-                  {l.label}
-                  {l.comingSoon ? " (Coming Soon)" : ""}
+                  {l.label}{l.comingSoon ? " (Coming Soon)" : ""}
                 </option>
               ))}
             </select>
@@ -584,8 +647,7 @@ export default function ChatApp({
         title="Delete conversation?"
       >
         <p className="mb-4 text-sm text-muted-foreground">
-          “{pendingDelete?.title}” and all its messages will be permanently
-          removed. This cannot be undone.
+          "{pendingDelete?.title}" and all its messages will be permanently removed. This cannot be undone.
         </p>
         <div className="flex justify-end gap-2">
           <button
@@ -599,36 +661,6 @@ export default function ChatApp({
             className="min-h-10 rounded-lg bg-destructive px-4 text-sm font-medium text-white hover:opacity-90"
           >
             Delete
-          </button>
-        </div>
-      </Modal>
-
-      {/* Rename */}
-      <Modal
-        open={!!renaming}
-        onClose={() => setRenaming(null)}
-        title="Rename conversation"
-      >
-        <input
-          autoFocus
-          value={renameValue}
-          onChange={(e) => setRenameValue(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && saveRename()}
-          className="mb-4 w-full rounded-lg border bg-background px-3 py-2.5 text-base outline-none focus:ring-2 focus:ring-ring sm:text-sm"
-        />
-        <div className="flex justify-end gap-2">
-          <button
-            onClick={() => setRenaming(null)}
-            className="min-h-10 rounded-lg border px-4 text-sm hover:bg-accent"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={saveRename}
-            disabled={!renameValue.trim()}
-            className="min-h-10 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
-          >
-            Save
           </button>
         </div>
       </Modal>

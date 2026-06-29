@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { memo, useEffect, useRef, useCallback } from "react";
 import { Copy, RotateCw, Send, Square, Trash2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -10,7 +10,8 @@ import { ProfileCard, isProfileCardQuery, DEFAULT_PROFILE } from "./profile-card
 
 const NEAR_BOTTOM_PX = 80; // px from bottom to trigger auto-scroll
 
-export default function Chat({
+// Memoized: prevents re-render when only sidebar state changes in ChatApp.
+const Chat = memo(function Chat({
   messages,
   input,
   setInput,
@@ -124,7 +125,7 @@ export default function Chat({
                 return (
                   <div
                     key={m.id}
-                    className={`group flex flex-col ${isUser ? "items-end" : "items-start"}`}
+                    className={`group flex flex-col ${isUser ? "items-end" : "items-start"}${m.isNew ? " animate-message" : ""}`}
                   >
                     <div className="max-w-[85%] sm:max-w-[80%]">
                       <div
@@ -258,7 +259,9 @@ export default function Chat({
       </div>
     </div>
   );
-}
+});
+
+export default Chat;
 
 function ActionButton({
   label,
