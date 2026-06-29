@@ -1,8 +1,9 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
+import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { users, accounts, sessions, verificationTokens } from "@/lib/db/schema";
+import { users, accounts, sessions, verificationTokens, userProfiles } from "@/lib/db/schema";
 import { upsertGoogleProfile } from "@/lib/db/profile-queries";
 import { isEmailBlocked } from "@/lib/admin/queries";
 import { syncUserToSheets } from "@/lib/google-sheets";
@@ -23,7 +24,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     }),
   ],
   callbacks: {
-    // Block terminated / banned accounts before creating a session.
+    // Block terminated / banned / disabled / suspended accounts before creating a session.
     async signIn({ user }) {
       const email = user.email?.toLowerCase();
       if (email) {
@@ -33,8 +34,19 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             console.warn(`[auth] blocked email attempted Google sign-in: ${email}`);
             return false;
           }
+          // Also block disabled and suspended accounts (password login checks isDisabled,
+          // but OAuth bypassed that check)
+          const [profile] = await db
+            .select({ isDisabled: userProfiles.isDisabled })
+            .from(userProfiles)
+            .where(eq(userProfiles.email, email))
+            .limit(1);
+          if (profile?.isDisabled) {
+            console.warn(`[auth] disabled account attempted Google sign-in: ${email}`);
+            return false;
+          }
         } catch (err) {
-          console.error("[auth] blocked email check failed (non-fatal):", err);
+          console.error("[auth] sign-in check failed (non-fatal):", err);
         }
       }
       return true;
