@@ -81,8 +81,9 @@ async function appendRow(
   spreadsheetId: string,
   values: string[],
   token: string,
+  sheet = "Users",
 ): Promise<void> {
-  const range = encodeURIComponent("Users!A:E");
+  const range = encodeURIComponent(`${sheet}!A:Z`);
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED`;
 
   const res = await fetch(url, {
@@ -133,6 +134,39 @@ export function syncUserToSheets(user: {
           console.warn("[sheets] sync failed after 3 attempts:", err);
           return;
         }
+        await new Promise((r) => setTimeout(r, 1000 * attempt));
+      }
+    }
+  })();
+}
+
+/** Fire-and-forget: sync any event (login, status change, etc.) to the Events sheet. Never throws. */
+export function syncEventToSheets(event: {
+  email: string;
+  eventType: string;
+  detail?: string;
+}): void {
+  const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+  const serviceEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY?.replace(/\\n/g, "\n");
+
+  if (!spreadsheetId || !serviceEmail || !privateKey) return;
+
+  const row = [
+    new Date().toISOString(),
+    event.email,
+    event.eventType,
+    event.detail ?? "",
+  ];
+
+  void (async () => {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const token = await getAccessToken(serviceEmail, privateKey);
+        await appendRow(spreadsheetId, row, token, "Events");
+        return;
+      } catch {
+        if (attempt === 3) return;
         await new Promise((r) => setTimeout(r, 1000 * attempt));
       }
     }

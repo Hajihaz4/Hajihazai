@@ -13,7 +13,30 @@ type DataTab =
   | "brains"
   | "blocked-emails"
   | "knowledge-permissions"
-  | "audit-log";
+  | "audit-log"
+  | "notifications"
+  | "maintenance"
+  | "health";
+
+type NotificationRow = {
+  id: string;
+  title: string;
+  message: string;
+  targetType: string;
+  sentAt: string | null;
+  createdAt: string;
+};
+
+type HealthData = {
+  status: string;
+  checkedAt: string;
+  database: { ok: boolean; latencyMs: number; error?: string };
+  providers: Array<{ provider: string; ok: boolean; latencyMs: number; error?: string }>;
+  memory: { heapUsedMB: number; heapTotalMB: number; rssMB: number };
+  uptime: number;
+};
+
+type MaintenanceConfig = { enabled: boolean; message: string };
 
 type BrainRow = {
   id: string;
@@ -55,6 +78,7 @@ type UserRow = {
   lastLogin: string | null;
   isDisabled: boolean | null;
   isTerminated: boolean | null;
+  isSuspended: boolean | null;
 };
 
 type BlockedEmail = { id: string; email: string; reason: string | null; createdAt: string };
@@ -215,6 +239,22 @@ export default function AdminPortal() {
   /* analytics */
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
 
+  /* notifications */
+  const [notifications, setNotifications] = useState<NotificationRow[]>([]);
+  const [notifTitle, setNotifTitle] = useState("");
+  const [notifMessage, setNotifMessage] = useState("");
+  const [notifTarget, setNotifTarget] = useState<"all" | "specific">("all");
+  const [notifSending, setNotifSending] = useState<string | null>(null);
+
+  /* maintenance */
+  const [maintenance, setMaintenance] = useState<MaintenanceConfig | null>(null);
+  const [maintenanceMessage, setMaintenanceMessage] = useState("");
+  const [maintenanceSaving, setMaintenanceSaving] = useState(false);
+
+  /* health */
+  const [health, setHealth] = useState<HealthData | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+
   /* ── loaders ───────────────────────────────────────────────────── */
 
   const loadAdmins = useCallback(async (initial = false) => {
@@ -270,6 +310,70 @@ export default function AdminPortal() {
     setAuditLog(d.entries ?? []);
   }
 
+  async function loadNotifications() {
+    const res = await fetch("/api/admin/notifications");
+    if (!res.ok) return;
+    const d = await res.json().catch(() => ({}));
+    setNotifications(d.notifications ?? []);
+  }
+
+  async function loadMaintenance() {
+    const res = await fetch("/api/admin/maintenance");
+    if (!res.ok) return;
+    const d = await res.json().catch(() => ({}));
+    setMaintenance(d);
+    setMaintenanceMessage(d.message ?? "");
+  }
+
+  async function loadHealth() {
+    setHealthLoading(true);
+    try {
+      const res = await fetch("/api/admin/health");
+      if (!res.ok) return;
+      const d = await res.json().catch(() => null);
+      setHealth(d);
+    } finally { setHealthLoading(false); }
+  }
+
+  async function sendNotification(id: string) {
+    setNotifSending(id);
+    try {
+      const res = await fetch(`/api/admin/notifications/${id}`, { method: "POST" });
+      if (res.ok) await loadNotifications();
+    } finally { setNotifSending(null); }
+  }
+
+  async function createNotification(e: React.FormEvent) {
+    e.preventDefault();
+    if (!notifTitle.trim() || !notifMessage.trim()) return;
+    const res = await fetch("/api/admin/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: notifTitle, message: notifMessage, targetType: notifTarget }),
+    });
+    if (res.ok) { setNotifTitle(""); setNotifMessage(""); await loadNotifications(); }
+  }
+
+  async function deleteNotification(id: string) {
+    if (!confirm("Delete this notification?")) return;
+    await fetch(`/api/admin/notifications/${id}`, { method: "DELETE" });
+    await loadNotifications();
+  }
+
+  async function saveMaintenance(e: React.FormEvent) {
+    e.preventDefault();
+    if (!maintenance) return;
+    setMaintenanceSaving(true);
+    try {
+      await fetch("/api/admin/maintenance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: maintenance.enabled, message: maintenanceMessage }),
+      });
+      await loadMaintenance();
+    } finally { setMaintenanceSaving(false); }
+  }
+
   async function loadTab(tab: DataTab) {
     setDataTab(tab);
     if (tab === "knowledge") { void loadKnowledge(); return; }
@@ -278,6 +382,9 @@ export default function AdminPortal() {
     if (tab === "blocked-emails") { void loadBlockedEmails(); return; }
     if (tab === "knowledge-permissions") { void loadKnowledgePerms(); return; }
     if (tab === "audit-log") { void loadAuditLog(); return; }
+    if (tab === "notifications") { void loadNotifications(); return; }
+    if (tab === "maintenance") { void loadMaintenance(); return; }
+    if (tab === "health") { void loadHealth(); return; }
     const res = await fetch(`/api/admin/data?view=${tab}`);
     if (!res.ok) return;
     const d = await res.json().catch(() => ({}));
@@ -372,7 +479,7 @@ export default function AdminPortal() {
 
   /* ── user management ────────────────────────────────────────── */
 
-  async function userAction(id: string, action: "disable" | "enable" | "terminate" | "delete" | "reset-password") {
+  async function userAction(id: string, action: "disable" | "enable" | "terminate" | "delete" | "reset-password" | "suspend" | "restore") {
     setError(null);
     if (action === "delete") {
       if (!confirm("Permanently delete this user and all their data?")) return;
@@ -396,6 +503,15 @@ export default function AdminPortal() {
         body: JSON.stringify({ password: pw }),
       });
       if (!res.ok) { const d = await res.json().catch(() => ({})); setError(d.error ?? "Could not reset password"); return; }
+      return;
+    }
+    if (action === "suspend" || action === "restore") {
+      const res = await fetch(`/api/admin/users/${id}/suspend`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ suspend: action === "suspend" }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); setError(d.error ?? "Could not update user"); return; }
+      void loadUsers(userPage);
       return;
     }
     const disabled = action === "disable";
@@ -561,6 +677,7 @@ export default function AdminPortal() {
 
   function userStatus(u: UserRow) {
     if (u.isTerminated) return { label: "Terminated", cls: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" };
+    if (u.isSuspended) return { label: "Suspended", cls: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400" };
     if (u.isDisabled) return { label: "Disabled", cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" };
     return { label: "Active", cls: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" };
   }
@@ -655,12 +772,15 @@ export default function AdminPortal() {
 
       {/* Data tab bar */}
       <div className="mb-0 flex gap-0 overflow-x-auto border-b">
-        {(["users", "projects", "documents", "knowledge", "brains", "blocked-emails", "knowledge-permissions", "audit-log"] as DataTab[]).map((t) => (
+        {(["users", "projects", "documents", "knowledge", "brains", "blocked-emails", "knowledge-permissions", "audit-log", "notifications", "maintenance", "health"] as DataTab[]).map((t) => (
           <button key={t} onClick={() => loadTab(t)} className={tabBtn(dataTab === t)}>
             {t === "knowledge" ? "Knowledge Base"
               : t === "blocked-emails" ? "Blocked Emails"
               : t === "knowledge-permissions" ? "K. Permissions"
               : t === "audit-log" ? "Audit Log"
+              : t === "notifications" ? "Notifications"
+              : t === "maintenance" ? "Maintenance"
+              : t === "health" ? "Health"
               : t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
@@ -696,6 +816,13 @@ export default function AdminPortal() {
                 </button>
               )}
             </form>
+            <a
+              href="/api/admin/export/users"
+              className="shrink-0 rounded-lg border px-3 py-2 text-sm hover:bg-accent"
+              download
+            >
+              Export CSV
+            </a>
           </div>
 
           {userLoading ? (
@@ -730,12 +857,16 @@ export default function AdminPortal() {
                     <span className="w-28 text-right text-xs text-muted-foreground">
                       {u.lastLogin ? new Date(u.lastLogin).toLocaleDateString() : "Never"}
                     </span>
-                    <span className="flex w-52 justify-end gap-1.5 flex-wrap">
+                    <span className="flex w-56 justify-end gap-1.5 flex-wrap">
                       <button onClick={() => userAction(u.id, "reset-password")} className="text-xs text-muted-foreground hover:text-foreground">Reset pw</button>
-                      {u.isDisabled
+                      {u.isSuspended
+                        ? <button onClick={() => userAction(u.id, "restore")} className="text-xs text-green-600 hover:opacity-80">Restore</button>
+                        : <button onClick={() => userAction(u.id, "suspend")} className="text-xs text-orange-600 hover:opacity-80">Suspend</button>
+                      }
+                      {!u.isSuspended && (u.isDisabled
                         ? <button onClick={() => userAction(u.id, "enable")} className="text-xs text-green-600 hover:opacity-80">Enable</button>
                         : <button onClick={() => userAction(u.id, "disable")} className="text-xs text-amber-600 hover:opacity-80">Disable</button>
-                      }
+                      )}
                       {!u.isTerminated && (
                         <button onClick={() => userAction(u.id, "terminate")} className="text-xs text-destructive hover:opacity-80">Terminate</button>
                       )}
@@ -930,7 +1061,217 @@ export default function AdminPortal() {
               ))}
             </div>
           )}
-          <p className="mt-1.5 text-xs text-muted-foreground">{auditLog.length} audit entr{auditLog.length === 1 ? "y" : "ies"}</p>
+          <div className="mt-2 flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">{auditLog.length} audit entr{auditLog.length === 1 ? "y" : "ies"}</p>
+            <a href="/api/admin/export/audit-log" className="text-xs text-muted-foreground hover:text-foreground" download>Export CSV</a>
+          </div>
+        </section>
+      )}
+
+      {/* ── Notifications tab ── */}
+      {dataTab === "notifications" && (
+        <section className="mt-4 space-y-4">
+          <div className="rounded-xl border bg-muted/30 p-5">
+            <h3 className="mb-3 text-sm font-semibold">Create Notification</h3>
+            <form onSubmit={createNotification} className="space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Title *</label>
+                <input className={input} placeholder="e.g. Scheduled maintenance tonight" value={notifTitle} onChange={(e) => setNotifTitle(e.target.value)} required />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Message *</label>
+                <textarea className={`${input} min-h-20 resize-none`} placeholder="Notification message…" value={notifMessage} onChange={(e) => setNotifMessage(e.target.value)} required />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Target</label>
+                <select className={input} value={notifTarget} onChange={(e) => setNotifTarget(e.target.value as "all" | "specific")}>
+                  <option value="all">All active users</option>
+                  <option value="specific">Specific users (send manually)</option>
+                </select>
+              </div>
+              <button type="submit" className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90">Create</button>
+            </form>
+          </div>
+
+          {notifications.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">No notifications yet.</p>
+          ) : (
+            <div className="overflow-hidden rounded-xl border">
+              <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-3 border-b bg-muted/40 px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <span>Title</span>
+                <span className="w-20 text-center">Target</span>
+                <span className="w-28 text-right">Status</span>
+                <span className="w-28 text-right">Created</span>
+                <span className="w-24 text-right">Actions</span>
+              </div>
+              {notifications.map((n) => (
+                <div key={n.id} className="grid grid-cols-[1fr_auto_auto_auto_auto] items-center gap-3 border-b px-4 py-3 text-sm last:border-0">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{n.title}</p>
+                    <p className="truncate text-xs text-muted-foreground">{n.message}</p>
+                  </div>
+                  <span className="w-20 text-center">
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px]">{n.targetType}</span>
+                  </span>
+                  <span className="w-28 text-right text-xs text-muted-foreground">
+                    {n.sentAt
+                      ? <span className="text-green-600">Sent {new Date(n.sentAt).toLocaleDateString()}</span>
+                      : <span className="text-amber-600">Draft</span>}
+                  </span>
+                  <span className="w-28 text-right text-xs text-muted-foreground">{new Date(n.createdAt).toLocaleDateString()}</span>
+                  <span className="flex w-24 justify-end gap-2">
+                    {!n.sentAt && (
+                      <button
+                        onClick={() => sendNotification(n.id)}
+                        disabled={notifSending === n.id}
+                        className="text-xs text-primary hover:opacity-80 disabled:opacity-40"
+                      >
+                        {notifSending === n.id ? "Sending…" : "Send"}
+                      </button>
+                    )}
+                    <button onClick={() => deleteNotification(n.id)} className="text-xs text-destructive hover:opacity-80">Delete</button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ── Maintenance tab ── */}
+      {dataTab === "maintenance" && (
+        <section className="mt-4">
+          {maintenance === null ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p>
+          ) : (
+            <div className="space-y-4">
+              <div className={`rounded-xl border p-5 ${maintenance.enabled ? "border-red-400 bg-red-50 dark:bg-red-950/20" : "bg-muted/30"}`}>
+                <div className="mb-4 flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold">Maintenance Mode</h3>
+                    <p className="mt-0.5 text-sm text-muted-foreground">When enabled, only admins can access the platform.</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setMaintenance((m) => m ? { ...m, enabled: !m.enabled } : m);
+                    }}
+                    className={`relative inline-flex h-6 w-11 cursor-pointer items-center rounded-full transition-colors ${maintenance.enabled ? "bg-red-500" : "bg-muted-foreground/30"}`}
+                  >
+                    <span className={`inline-block size-4 rounded-full bg-white shadow transition-transform ${maintenance.enabled ? "translate-x-6" : "translate-x-1"}`} />
+                  </button>
+                </div>
+                <form onSubmit={saveMaintenance} className="space-y-3">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-muted-foreground">Maintenance message (shown to users)</label>
+                    <textarea
+                      className={`${input} min-h-16 resize-none`}
+                      value={maintenanceMessage}
+                      onChange={(e) => setMaintenanceMessage(e.target.value)}
+                      placeholder="We'll be back shortly…"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={maintenanceSaving}
+                    className={`rounded-lg px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40 ${maintenance.enabled ? "bg-red-600" : "bg-primary"}`}
+                  >
+                    {maintenanceSaving ? "Saving…" : maintenance.enabled ? "Save & Activate Maintenance" : "Save (Maintenance Off)"}
+                  </button>
+                </form>
+              </div>
+
+              <div className="rounded-xl border bg-muted/20 p-4 text-sm">
+                <p className="font-medium">How maintenance mode works</p>
+                <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                  <li>• Signed-in non-admin users are redirected to the maintenance page</li>
+                  <li>• Admin users can access the platform normally</li>
+                  <li>• Chat API returns a maintenance error for non-admin requests</li>
+                  <li>• Takes effect within 30 seconds (cached setting)</li>
+                </ul>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ── Health tab ── */}
+      {dataTab === "health" && (
+        <section className="mt-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold">System Health</h3>
+            <button
+              onClick={loadHealth}
+              disabled={healthLoading}
+              className="rounded-lg border px-3 py-1.5 text-xs hover:bg-accent disabled:opacity-40"
+            >
+              {healthLoading ? "Checking…" : "Refresh"}
+            </button>
+          </div>
+
+          {health === null ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              {healthLoading ? "Checking system health…" : "Click Refresh to check system health."}
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {/* Overall status */}
+              <div className={`flex items-center gap-3 rounded-xl border p-4 ${health.status === "healthy" ? "border-green-300 bg-green-50 dark:bg-green-950/20" : "border-amber-300 bg-amber-50 dark:bg-amber-950/20"}`}>
+                <span className={`size-3 rounded-full ${health.status === "healthy" ? "bg-green-500" : "bg-amber-500"}`} />
+                <div>
+                  <p className="text-sm font-medium capitalize">{health.status}</p>
+                  <p className="text-xs text-muted-foreground">Checked {new Date(health.checkedAt).toLocaleTimeString()}</p>
+                </div>
+                <span className="ml-auto text-xs text-muted-foreground">Uptime {Math.floor(health.uptime / 3600)}h {Math.floor((health.uptime % 3600) / 60)}m</span>
+              </div>
+
+              {/* Database */}
+              <div className="rounded-xl border p-4">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-medium">Database (Neon)</span>
+                  <span className={`flex items-center gap-1.5 ${health.database.ok ? "text-green-600" : "text-red-500"}`}>
+                    <span className={`size-2 rounded-full ${health.database.ok ? "bg-green-500" : "bg-red-500"}`} />
+                    {health.database.ok ? `${health.database.latencyMs}ms` : "Error"}
+                  </span>
+                </div>
+                {health.database.error && <p className="mt-1 text-xs text-red-500">{health.database.error}</p>}
+              </div>
+
+              {/* AI Providers */}
+              <div className="rounded-xl border p-4">
+                <p className="mb-3 text-sm font-medium">AI Providers</p>
+                <div className="space-y-2">
+                  {health.providers.map((p) => (
+                    <div key={p.provider} className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">{p.provider}</span>
+                      <span className={`flex items-center gap-1.5 ${p.ok ? "text-green-600" : "text-red-500"}`}>
+                        <span className={`size-2 rounded-full ${p.ok ? "bg-green-500" : "bg-red-500"}`} />
+                        {p.ok ? `${p.latencyMs}ms` : (p.error?.includes("No API key") ? "Not configured" : "Unreachable")}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Memory */}
+              <div className="rounded-xl border p-4">
+                <p className="mb-3 text-sm font-medium">Memory Usage</p>
+                <div className="grid grid-cols-3 gap-4 text-center text-sm">
+                  <div>
+                    <p className="text-xl font-semibold tabular-nums">{health.memory.heapUsedMB}MB</p>
+                    <p className="text-xs text-muted-foreground">Heap Used</p>
+                  </div>
+                  <div>
+                    <p className="text-xl font-semibold tabular-nums">{health.memory.heapTotalMB}MB</p>
+                    <p className="text-xs text-muted-foreground">Heap Total</p>
+                  </div>
+                  <div>
+                    <p className="text-xl font-semibold tabular-nums">{health.memory.rssMB}MB</p>
+                    <p className="text-xs text-muted-foreground">RSS</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
       )}
 

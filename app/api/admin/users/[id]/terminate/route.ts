@@ -1,5 +1,6 @@
 import { requireAdmin } from "@/lib/admin/session";
 import { adminGetUserDetail, adminTerminateUser } from "@/lib/admin/queries";
+import { syncEventToSheets } from "@/lib/google-sheets";
 
 export async function POST(
   _req: Request,
@@ -14,5 +15,6 @@ export async function POST(
   if (!user.email) return Response.json({ error: "User has no email" }, { status: 400 });
 
   await adminTerminateUser(id, user.email);
+  syncEventToSheets({ email: user.email, eventType: "account_terminated", detail: `by admin ${sess.adminId}` });
   return Response.json({ ok: true });
 }

@@ -3,6 +3,7 @@ import { verifyPassword } from "@/lib/auth/password";
 import { createUserSession, isSecureRequest } from "@/lib/auth/session";
 import { rateLimitResponse } from "@/lib/ratelimit";
 import { isEmailBlocked } from "@/lib/admin/queries";
+import { syncEventToSheets } from "@/lib/google-sheets";
 
 /** Username/email + password login. Mints an Auth.js-compatible DB session. */
 export async function POST(req: Request) {
@@ -37,5 +38,6 @@ export async function POST(req: Request) {
   }
 
   await createUserSession(profile.userId, isSecureRequest(req));
+  syncEventToSheets({ email: profile.email ?? identifier, eventType: "login", detail: "password" });
   return Response.json({ ok: true });
 }

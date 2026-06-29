@@ -5,6 +5,7 @@ import { listConversations } from "@/lib/db/queries";
 import { getProfile, isProfileComplete } from "@/lib/db/profile-queries";
 import { listLevels } from "@/lib/ai/levels";
 import { isAdmin } from "@/lib/auth/admin";
+import { isMaintenanceMode } from "@/lib/system-settings";
 import { signInWithGoogle } from "@/app/actions";
 import ChatApp from "@/components/chat-app";
 import AuthForm from "@/components/auth-form";
@@ -89,6 +90,13 @@ export default async function Home({
     );
   }
 
+  // Maintenance mode — admins bypass, everyone else goes to maintenance page
+  const adminUser = isAdmin(session.user.email);
+  if (!adminUser) {
+    const maintenance = await isMaintenanceMode().catch(() => false);
+    if (maintenance) redirect("/maintenance");
+  }
+
   // Signed in but not onboarded → onboarding.
   const profile = await getProfile(session.user.id);
   if (!isProfileComplete(profile)) {
@@ -105,7 +113,7 @@ export default async function Home({
   // Capability levels (Low/Medium active, High/Max "Coming Soon"). The client
   // refines availability via GET /api/models, which runs live health probes.
   const levels = listLevels();
-  const admin = isAdmin(session.user.email ?? profile?.email);
+  const admin = adminUser || isAdmin(profile?.email);
   const { c: openConversationId } = await searchParams;
 
   return (

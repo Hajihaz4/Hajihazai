@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, ilike, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, ilike, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   admins,
@@ -14,10 +14,13 @@ import {
   blockedEmails,
   knowledgePermissions,
   knowledgeAuditLog,
+  notifications,
+  userNotifications,
   type Admin,
   type BlockedEmail,
   type KnowledgePermission,
   type KnowledgeAuditLog,
+  type Notification,
 } from "@/lib/db/schema";
 import { isUniqueViolation } from "@/lib/db/credential-queries";
 import { hashPassword } from "@/lib/auth/password";
@@ -575,4 +578,174 @@ export async function getAdminAnalyticsV2(): Promise<AdminAnalyticsV2> {
       dailyKnowledgeUpdates: dailyKnowledgeUpdates.map((r) => ({ date: r.date, count: Number(r.count) })),
     },
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Suspend / Restore                                                    */
+/* ------------------------------------------------------------------ */
+
+export async function adminSuspendUser(userId: string): Promise<void> {
+  await db
+    .update(userProfiles)
+    .set({ isSuspended: true, suspendedAt: new Date(), isDisabled: true, updatedAt: new Date() })
+    .where(eq(userProfiles.userId, userId));
+}
+
+export async function adminRestoreUser(userId: string): Promise<void> {
+  await db
+    .update(userProfiles)
+    .set({ isSuspended: false, suspendedAt: null, isDisabled: false, updatedAt: new Date() })
+    .where(eq(userProfiles.userId, userId));
+}
+
+/* ------------------------------------------------------------------ */
+/* Notifications                                                        */
+/* ------------------------------------------------------------------ */
+
+export async function adminListNotifications(limit = 50) {
+  return db
+    .select()
+    .from(notifications)
+    .orderBy(desc(notifications.createdAt))
+    .limit(limit);
+}
+
+export async function adminGetNotification(id: string) {
+  const [row] = await db.select().from(notifications).where(eq(notifications.id, id)).limit(1);
+  return row ?? null;
+}
+
+export async function adminCreateNotification(data: {
+  title: string;
+  message: string;
+  targetType: "all" | "specific";
+  createdBy?: string;
+}): Promise<typeof notifications.$inferSelect> {
+  const [row] = await db.insert(notifications).values(data).returning();
+  return row;
+}
+
+export async function adminSendNotification(id: string): Promise<void> {
+  const notif = await adminGetNotification(id);
+  if (!notif) throw new Error("Notification not found");
+
+  await db.update(notifications).set({ sentAt: new Date() }).where(eq(notifications.id, id));
+
+  if (notif.targetType === "all") {
+    const allUsers = await db
+      .select({ id: users.id })
+      .from(users)
+      .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
+      .where(and(eq(userProfiles.isDisabled, false), eq(userProfiles.isTerminated, false)));
+
+    if (allUsers.length > 0) {
+      await db.insert(userNotifications).values(
+        allUsers.map((u) => ({ userId: u.id, notificationId: id })),
+      );
+    }
+  }
+}
+
+export async function adminDeleteNotification(id: string): Promise<void> {
+  await db.delete(notifications).where(eq(notifications.id, id));
+}
+
+export async function getUserNotifications(userId: string) {
+  return db
+    .select({
+      id: userNotifications.id,
+      notificationId: userNotifications.notificationId,
+      title: notifications.title,
+      message: notifications.message,
+      isRead: userNotifications.isRead,
+      createdAt: notifications.createdAt,
+    })
+    .from(userNotifications)
+    .innerJoin(notifications, eq(notifications.id, userNotifications.notificationId))
+    .where(eq(userNotifications.userId, userId))
+    .orderBy(desc(notifications.createdAt))
+    .limit(20);
+}
+
+export async function markNotificationRead(userNotifId: string, userId: string): Promise<void> {
+  await db
+    .update(userNotifications)
+    .set({ isRead: true, readAt: new Date() })
+    .where(and(eq(userNotifications.id, userNotifId), eq(userNotifications.userId, userId)));
+}
+
+/* ------------------------------------------------------------------ */
+/* Enhanced user detail                                                 */
+/* ------------------------------------------------------------------ */
+
+export async function adminGetEnhancedUserDetail(userId: string) {
+  const [row] = await db
+    .select({
+      id: users.id,
+      email: userProfiles.email,
+      username: userProfiles.username,
+      googleName: userProfiles.googleName,
+      profilePicture: userProfiles.profilePicture,
+      isDisabled: userProfiles.isDisabled,
+      isTerminated: userProfiles.isTerminated,
+      isSuspended: userProfiles.isSuspended,
+      suspendedAt: userProfiles.suspendedAt,
+      createdAt: userProfiles.createdAt,
+      lastLogin: userProfiles.lastLogin,
+      hasGoogle: sql<boolean>`(${userProfiles.googleId} IS NOT NULL)`.as("has_google"),
+      hasPassword: sql<boolean>`(${userProfiles.passwordHash} IS NOT NULL)`.as("has_password"),
+    })
+    .from(users)
+    .innerJoin(userProfiles, eq(userProfiles.userId, users.id))
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  if (!row) return null;
+
+  const [[{ convs }], [{ msgs }], [{ docs }], [{ proj }]] = await Promise.all([
+    db.select({ convs: count() }).from(conversations).where(eq(conversations.userId, userId)),
+    db.select({ msgs: count() }).from(messages).innerJoin(conversations, eq(conversations.id, messages.conversationId)).where(eq(conversations.userId, userId)),
+    db.select({ docs: count() }).from(knowledgeDocument).where(eq(knowledgeDocument.userId, userId)),
+    db.select({ proj: count() }).from(projects).where(eq(projects.userId, userId)),
+  ]);
+
+  return {
+    ...row,
+    totalConversations: Number(convs),
+    totalMessages: Number(msgs),
+    totalDocuments: Number(docs),
+    totalProjects: Number(proj),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Export helpers                                                       */
+/* ------------------------------------------------------------------ */
+
+export async function adminExportUsers() {
+  return db
+    .select({
+      id: users.id,
+      email: userProfiles.email,
+      username: userProfiles.username,
+      googleName: userProfiles.googleName,
+      isDisabled: userProfiles.isDisabled,
+      isTerminated: userProfiles.isTerminated,
+      isSuspended: userProfiles.isSuspended,
+      createdAt: userProfiles.createdAt,
+      lastLogin: userProfiles.lastLogin,
+      hasGoogle: sql<boolean>`(${userProfiles.googleId} IS NOT NULL)`.as("has_google"),
+      hasPassword: sql<boolean>`(${userProfiles.passwordHash} IS NOT NULL)`.as("has_password"),
+    })
+    .from(users)
+    .innerJoin(userProfiles, eq(userProfiles.userId, users.id))
+    .orderBy(desc(userProfiles.createdAt));
+}
+
+export async function adminExportAuditLog() {
+  return db
+    .select()
+    .from(knowledgeAuditLog)
+    .orderBy(desc(knowledgeAuditLog.createdAt))
+    .limit(10_000);
 }

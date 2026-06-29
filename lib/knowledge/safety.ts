@@ -45,7 +45,7 @@ export function validateKnowledgeContent(content: string): SafetyResult | Safety
 export async function logKnowledgeAction(params: {
   userId: string | null;
   email: string;
-  action: "create" | "update" | "delete";
+  action: "create" | "update" | "delete" | "create_content" | "update_content" | "delete_content";
   documentId?: string | null;
   documentTitle: string;
   contentBefore?: string | null;

@@ -1,0 +1,22 @@
+import { auth } from "@/auth";
+import { getUserNotifications, markNotificationRead } from "@/lib/admin/queries";
+
+export async function GET() {
+  const session = await auth();
+  if (!session?.user?.id) return new Response("Unauthorized", { status: 401 });
+
+  const items = await getUserNotifications(session.user.id);
+  return Response.json({ notifications: items });
+}
+
+export async function POST(req: Request) {
+  const session = await auth();
+  if (!session?.user?.id) return new Response("Unauthorized", { status: 401 });
+
+  const body = await req.json().catch(() => ({}));
+  const id = body.id;
+  if (!id) return Response.json({ error: "id required" }, { status: 400 });
+
+  await markNotificationRead(id, session.user.id);
+  return Response.json({ ok: true });
+}

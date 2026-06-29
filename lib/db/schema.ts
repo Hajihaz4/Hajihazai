@@ -409,6 +409,8 @@ export const userProfiles = pgTable(
     countryCode: text("country_code"),
     isDisabled: boolean("is_disabled").notNull().default(false),
     isTerminated: boolean("is_terminated").notNull().default(false),
+    isSuspended: boolean("is_suspended").notNull().default(false),
+    suspendedAt: timestamp("suspended_at", { mode: "date" }),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
     lastLogin: timestamp("last_login", { mode: "date" }),
@@ -609,3 +611,59 @@ export const knowledgeAuditLog = pgTable(
 );
 
 export type KnowledgeAuditLog = typeof knowledgeAuditLog.$inferSelect;
+
+/* ------------------------------------------------------------------ */
+/* V1+ — System settings (key/value store for runtime config)          */
+/* ------------------------------------------------------------------ */
+
+export const systemSettings = pgTable("system_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
+
+export type SystemSetting = typeof systemSettings.$inferSelect;
+
+/* ------------------------------------------------------------------ */
+/* V1+ — Admin Notifications                                           */
+/* ------------------------------------------------------------------ */
+
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    title: text("title").notNull(),
+    message: text("message").notNull(),
+    // "all" = broadcast to all users, "specific" = only notificationTargets rows
+    targetType: text("target_type").notNull().default("all"),
+    sentAt: timestamp("sent_at", { mode: "date" }),
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("notifications_created_idx").on(t.createdAt)],
+);
+
+export type Notification = typeof notifications.$inferSelect;
+
+export const userNotifications = pgTable(
+  "user_notifications",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    notificationId: text("notification_id")
+      .notNull()
+      .references(() => notifications.id, { onDelete: "cascade" }),
+    isRead: boolean("is_read").notNull().default(false),
+    readAt: timestamp("read_at", { mode: "date" }),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("user_notifications_user_idx").on(t.userId)],
+);
+
+export type UserNotification = typeof userNotifications.$inferSelect;

@@ -1,5 +1,6 @@
 import { requireAdmin } from "@/lib/admin/session";
-import { adminSetUserDisabled } from "@/lib/admin/queries";
+import { adminSetUserDisabled, adminGetUserDetail } from "@/lib/admin/queries";
+import { syncEventToSheets } from "@/lib/google-sheets";
 
 export async function POST(
   req: Request,
@@ -14,5 +15,11 @@ export async function POST(
 
   const ok = await adminSetUserDisabled(id, disabled);
   if (!ok) return Response.json({ error: "User not found" }, { status: 404 });
+
+  const user = await adminGetUserDetail(id).catch(() => null);
+  if (user?.email) {
+    syncEventToSheets({ email: user.email, eventType: disabled ? "account_disabled" : "account_enabled", detail: `by admin ${sess.adminId}` });
+  }
+
   return Response.json({ ok: true, disabled });
 }

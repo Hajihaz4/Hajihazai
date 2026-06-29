@@ -12,6 +12,8 @@ import { resolveLevel, isLevel, isLevelEnabled } from "@/lib/ai/levels";
 import { isModelUsable } from "@/lib/ai/health";
 import { isAdmin } from "@/lib/auth/admin";
 import { rateLimitResponse } from "@/lib/ratelimit";
+import { isMaintenanceMode } from "@/lib/system-settings";
+import { isKnowledgeWritePermitted } from "@/lib/admin/queries";
 import { routeToBrain, type BrainMode } from "@/lib/ai/brain-router";
 import { getBrainBySlug } from "@/lib/db/brain-queries";
 import {
@@ -42,6 +44,21 @@ export async function POST(req: Request) {
   }
 
   const admin = isAdmin(session.user.email);
+
+  // Maintenance mode — block non-admins
+  if (!admin) {
+    const maintenance = await isMaintenanceMode().catch(() => false);
+    if (maintenance) {
+      const body = new ReadableStream({
+        start(ctrl) {
+          ctrl.enqueue(sse({ t: "error", message: "System is currently under maintenance. Please try again later." }));
+          ctrl.close();
+        },
+      });
+      return new Response(body, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } });
+    }
+  }
+
   const debug =
     admin &&
     ["1", "true"].includes(new URL(req.url).searchParams.get("debug") ?? "");
@@ -137,6 +154,20 @@ export async function POST(req: Request) {
   }));
   if (debug) historyMessages.push({ role: "user", content: message.trim() });
 
+  // Warn the AI when write-intent is detected for unauthorized users
+  const WRITE_INTENT_RE =
+    /\b(remember|save|update|store|add|don'?t forget)\b.{0,40}\b(this|that|it|knowledge|memory|information|info)\b/i;
+  let writeIntentBlock = "";
+  if (!admin && WRITE_INTENT_RE.test(message)) {
+    const permitted = session.user.email
+      ? await isKnowledgeWritePermitted(session.user.email).catch(() => false)
+      : false;
+    if (!permitted) {
+      writeIntentBlock =
+        "SYSTEM NOTICE: This user does NOT have permission to update system knowledge. If they ask you to save, remember, update, or store any information to your knowledge base or memory, respond with: \"You do not have permission to update system knowledge. Please contact an admin.\" Do not pretend to save anything.";
+    }
+  }
+
   const chatMessages: ChatMessage[] = [
     { role: "system", content: HAJI_PERSONA.system },
     ...(projectInstructions
@@ -145,6 +176,7 @@ export async function POST(req: Request) {
     ...(memory.block ? [{ role: "system" as const, content: memory.block }] : []),
     ...(knowledge.block ? [{ role: "system" as const, content: knowledge.block }] : []),
     ...(toolBlock ? [{ role: "system" as const, content: toolBlock }] : []),
+    ...(writeIntentBlock ? [{ role: "system" as const, content: writeIntentBlock }] : []),
     ...historyMessages,
   ];
 
