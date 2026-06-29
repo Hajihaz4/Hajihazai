@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { deleteMemory, updateMemory } from "@/lib/db/memory-queries";
+import { embedMemory } from "@/lib/memory/embed-memory";
 
 export async function PATCH(
   req: Request,
@@ -30,6 +31,14 @@ export async function PATCH(
   if (!memory) {
     return new Response("Not found", { status: 404 });
   }
+
+  // Re-embed when content changes so the vector stays consistent with the text.
+  if (content !== undefined) {
+    await embedMemory(session.user.id, id).catch((err) => {
+      console.warn("[memories] re-embedding failed on update for", id, ":", err);
+    });
+  }
+
   return Response.json({ memory });
 }
 

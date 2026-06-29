@@ -5,6 +5,7 @@ import {
   listAllMemories,
   memoryStats,
 } from "@/lib/db/memory-queries";
+import { embedMemory } from "@/lib/memory/embed-memory";
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -48,5 +49,11 @@ export async function POST(req: Request) {
     content: content.trim(),
     type: typeof type === "string" && type.trim() ? type.trim() : undefined,
   });
+
+  // Embed immediately so semantic retrieval works from the first chat turn.
+  await embedMemory(session.user.id, memory.id).catch((err) => {
+    console.warn("[memories] embedding failed for", memory.id, ":", err);
+  });
+
   return Response.json({ memory }, { status: 201 });
 }

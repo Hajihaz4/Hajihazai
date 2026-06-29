@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { approveMemory } from "@/lib/db/memory-queries";
+import { embedMemory } from "@/lib/memory/embed-memory";
 
 export async function POST(
   _req: Request,
@@ -16,5 +17,11 @@ export async function POST(
   if (!memory) {
     return new Response("Not found", { status: 404 });
   }
+
+  // Generate embedding now that the memory is active.
+  await embedMemory(session.user.id, id).catch((err) => {
+    console.warn("[memories] embedding failed on approve for", id, ":", err);
+  });
+
   return Response.json({ memory });
 }

@@ -13,11 +13,11 @@ import {
 import { keywordDocumentSearch } from "@/lib/knowledge/keyword-search";
 import { listSystemProjects } from "@/lib/db/project-queries";
 
-const DEFAULT_BUDGET_TOKENS = 400;
+const DEFAULT_BUDGET_TOKENS = 800;
 const SEMANTIC_LIMIT = 10;
 const KNOWLEDGE_LIMIT = 10;
-// Hard context-block caps (Phase 9.0).
-const MEMORY_MAX_CHARS = 1000;
+// Hard context-block caps — generous enough to hold ~30 short memories.
+const MEMORY_MAX_CHARS = 3000;
 // 6000 chars ≈ 5-6 knowledge chunks — enough for a multi-section profile doc.
 // Previous 2000 allowed only 1 chunk after boilerplate overhead (~143 chars).
 const KNOWLEDGE_MAX_CHARS = 6000;
@@ -52,21 +52,29 @@ export async function buildMemoryContext(
   let fallbackUsed = false;
 
   // Primary: semantic retrieval on the current message.
+  // Wrapped in catch — if the embedding provider is unavailable (quota, network),
+  // fall through to keyword search rather than returning empty context.
   if (query) {
     const hits = await semanticSearch(
       userId,
       query,
       SEMANTIC_LIMIT,
       DEFAULT_SIMILARITY_THRESHOLD,
-    );
+    ).catch((err) => {
+      console.warn("[memory] semantic search failed, using keyword fallback:", err);
+      return [] as Awaited<ReturnType<typeof semanticSearch>>;
+    });
     items = hits.map((h) => ({ id: h.id, type: h.type, content: h.content }));
   }
 
   // Fallback: keyword/type+recency retrieval over active memories.
+  // Pass the actual query so keyword-relevant memories rank first; if no keyword
+  // match at all, include every active memory (let the LLM filter by relevance).
   if (items.length === 0) {
     fallbackUsed = true;
     const active = await getActiveMemories(userId);
-    const ranked = rankMemories(active, undefined, Date.now());
+    let ranked = rankMemories(active, query, Date.now());
+    if (ranked.length === 0) ranked = rankMemories(active, undefined, Date.now());
     items = ranked.map((m) => ({ id: m.id, type: m.type, content: m.content }));
   }
 

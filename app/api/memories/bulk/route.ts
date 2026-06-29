@@ -4,6 +4,7 @@ import {
   bulkDelete,
   bulkReject,
 } from "@/lib/db/memory-queries";
+import { embedMemory } from "@/lib/memory/embed-memory";
 
 /**
  * Bulk actions on the user's own memories.
@@ -28,9 +29,21 @@ export async function POST(req: Request) {
   }
 
   let affected;
-  if (action === "approve") affected = await bulkApprove(session.user.id, ids);
-  else if (action === "reject") affected = await bulkReject(session.user.id, ids);
-  else affected = await bulkDelete(session.user.id, ids);
+  if (action === "approve") {
+    affected = await bulkApprove(session.user.id, ids);
+    // Embed all newly active memories in parallel; failures are non-fatal.
+    await Promise.allSettled(
+      affected.map((m) =>
+        embedMemory(session.user.id, m.id).catch((err) =>
+          console.warn("[memories] bulk embed failed for", m.id, ":", err),
+        ),
+      ),
+    );
+  } else if (action === "reject") {
+    affected = await bulkReject(session.user.id, ids);
+  } else {
+    affected = await bulkDelete(session.user.id, ids);
+  }
 
   return Response.json({
     action,
