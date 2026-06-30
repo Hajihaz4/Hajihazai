@@ -25,6 +25,7 @@ import {
   type ToolExecution,
 } from "@/lib/tools/tool-calling";
 import { shouldCheckTools } from "@/lib/tools/should-check-tools";
+import { shouldRetrieve } from "@/lib/ai/should-retrieve";
 import { wrapToolOutput } from "@/lib/tools/output-guard";
 import type { ChatMessage } from "@/lib/ai/types";
 
@@ -91,16 +92,24 @@ export async function POST(req: Request) {
   const effectiveBrainMode: BrainMode = brainMode === "smart" ? "smart" : "manual";
   const resolvedBrainSlug = effectiveBrainMode === "smart" ? routeToBrain(message) : null;
 
+  // Greetings / low-information acknowledgements ("hi", "thanks", "ok") must not
+  // trigger RAG — otherwise memory + knowledge get injected into small talk.
+  const wantRetrieval = shouldRetrieve(message);
+  const EMPTY_MEMORY = { block: "", memories: [] as Awaited<ReturnType<typeof buildMemoryContext>>["memories"], count: 0, fallbackUsed: false };
+  const EMPTY_KNOWLEDGE = { block: "", chunks: [] as Awaited<ReturnType<typeof buildKnowledgeContext>>["chunks"], count: 0 };
+
   const WRITE_INTENT_RE =
     /\b(remember|save|update|store|add|don'?t forget)\b.{0,40}\b(this|that|it|knowledge|memory|information|info)\b/i;
   const hasWriteIntent = !admin && WRITE_INTENT_RE.test(message) && !!session.user.email;
 
   const [convo, memory, tool, brainForSmart, writePermitted] = await Promise.all([
     getConversation(session.user.id, conversationId),
-    buildMemoryContext(session.user.id, { query: message }).catch((err) => {
-      console.warn("[chat] memory context failed:", err);
-      return { block: "", memories: [] as Awaited<ReturnType<typeof buildMemoryContext>>["memories"], count: 0, fallbackUsed: false };
-    }),
+    wantRetrieval
+      ? buildMemoryContext(session.user.id, { query: message }).catch((err) => {
+          console.warn("[chat] memory context failed:", err);
+          return EMPTY_MEMORY;
+        })
+      : Promise.resolve(EMPTY_MEMORY),
     shouldCheckTools(message)
       ? selectAndRunTool(session.user.id, message, { audit: true })
       : Promise.resolve<ToolExecution>({ toolRequested: null, toolExecuted: false, toolResult: null, run: null }),
@@ -127,14 +136,16 @@ export async function POST(req: Request) {
   // completes before streaming starts so userMsg is available for the SSE event.
   const [project, knowledge, history, userMsgResult] = await Promise.all([
     projectId ? getProject(session.user.id, projectId) : Promise.resolve(null),
-    buildKnowledgeContext(session.user.id, {
-      query: message,
-      projectId,
-      brainId: resolvedBrainId ?? undefined,
-    }).catch((err) => {
-      console.warn("[chat] knowledge context failed:", err);
-      return { block: "", chunks: [] as Awaited<ReturnType<typeof buildKnowledgeContext>>["chunks"], count: 0 };
-    }),
+    wantRetrieval
+      ? buildKnowledgeContext(session.user.id, {
+          query: message,
+          projectId,
+          brainId: resolvedBrainId ?? undefined,
+        }).catch((err) => {
+          console.warn("[chat] knowledge context failed:", err);
+          return EMPTY_KNOWLEDGE;
+        })
+      : Promise.resolve(EMPTY_KNOWLEDGE),
     listRecentMessages(conversationId, 20),
     !debug && !regenerate
       ? addMessage({ conversationId, role: "user", content: message })

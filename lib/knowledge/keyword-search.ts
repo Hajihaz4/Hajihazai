@@ -24,7 +24,10 @@ const STOPWORDS = new Set([
 export function tokenize(query: string): string[] {
   const seen = new Set<string>();
   for (const raw of query.toLowerCase().split(/[^a-z0-9]+/)) {
-    if (raw.length < 2 || STOPWORDS.has(raw)) continue;
+    // Require ≥3 chars: 2-char tokens (hi, ok, yo) match '%xx%' across the whole
+    // corpus (e.g. "hi" matched 19 chunks via "this"/"his"/"within"), injecting
+    // unrelated knowledge. Numbers are kept (e.g. a year like "2013" → still ≥3).
+    if (raw.length < 3 || STOPWORDS.has(raw)) continue;
     seen.add(raw);
   }
   return [...seen];

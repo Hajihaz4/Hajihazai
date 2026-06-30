@@ -67,13 +67,15 @@ export async function buildMemoryContext(
   }
 
   // Fallback: keyword/type+recency retrieval over active memories.
-  // Pass the actual query so keyword-relevant memories rank first; if no keyword
-  // match at all, include every active memory (let the LLM filter by relevance).
+  // Pass the actual query so only keyword-relevant memories are included. If the
+  // query matches no memory, inject NOTHING — previously this dumped EVERY active
+  // memory ("let the LLM filter"), which surfaced unrelated profile data on
+  // low-information turns. When no query is given, rankMemories returns all
+  // (intentional for non-chat callers like the memory page).
   if (items.length === 0) {
     fallbackUsed = true;
     const active = await getActiveMemories(userId);
-    let ranked = rankMemories(active, query, Date.now());
-    if (ranked.length === 0) ranked = rankMemories(active, undefined, Date.now());
+    const ranked = rankMemories(active, query, Date.now());
     items = ranked.map((m) => ({ id: m.id, type: m.type, content: m.content }));
   }
 

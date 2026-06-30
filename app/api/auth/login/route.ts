@@ -33,8 +33,8 @@ export async function POST(req: Request) {
   const blocked = profile.email
     ? await isEmailBlocked(profile.email).catch(() => false)
     : false;
-  if (blocked || profile.isDisabled) {
-    return Response.json({ error: "This account has been disabled" }, { status: 403 });
+  if (blocked || profile.isDisabled || profile.isSuspended) {
+    return Response.json({ error: "This account is not active. Please contact support." }, { status: 403 });
   }
 
   await createUserSession(profile.userId, isSecureRequest(req));

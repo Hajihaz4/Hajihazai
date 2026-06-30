@@ -37,12 +37,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           // Also block disabled and suspended accounts (password login checks isDisabled,
           // but OAuth bypassed that check)
           const [profile] = await db
-            .select({ isDisabled: userProfiles.isDisabled })
+            .select({ isDisabled: userProfiles.isDisabled, isSuspended: userProfiles.isSuspended })
             .from(userProfiles)
             .where(eq(userProfiles.email, email))
             .limit(1);
-          if (profile?.isDisabled) {
-            console.warn(`[auth] disabled account attempted Google sign-in: ${email}`);
+          if (profile?.isDisabled || profile?.isSuspended) {
+            console.warn(`[auth] disabled/suspended account attempted Google sign-in: ${email}`);
             return false;
           }
         } catch (err) {
