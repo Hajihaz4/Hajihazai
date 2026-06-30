@@ -28,6 +28,7 @@ import { shouldCheckTools } from "@/lib/tools/should-check-tools";
 import { shouldRetrieve } from "@/lib/ai/should-retrieve";
 import { wrapToolOutput } from "@/lib/tools/output-guard";
 import type { ChatMessage } from "@/lib/ai/types";
+import { buildConversationTurns } from "@/lib/ai/conversation-turns";
 
 const CHAT_RATE_LIMIT = 30;
 const CHAT_RATE_WINDOW_MS = 60_000;
@@ -168,11 +169,14 @@ export async function POST(req: Request) {
     ? "SYSTEM NOTICE: This user does NOT have permission to update system knowledge. If they ask you to save, remember, update, or store any information to your knowledge base or memory, respond with: \"You do not have permission to update system knowledge. Please contact an admin.\" Do not pretend to save anything."
     : "";
 
-  const historyMessages: ChatMessage[] = history.map((m) => ({
-    role: m.role,
-    content: m.content,
-  }));
-  if (debug) historyMessages.push({ role: "user", content: message.trim() });
+  // Build the conversation turns so the CURRENT message is always the final user
+  // turn. Previously this relied on listRecentMessages() (which races the parallel
+  // addMessage write) and only appended the current message in debug mode, so in
+  // production the model answered the PREVIOUS turn. See lib/ai/conversation-turns.
+  const historyMessages: ChatMessage[] = buildConversationTurns(history, message, {
+    regenerate,
+    currentUserMessageId: userMsg?.id,
+  });
 
   const chatMessages: ChatMessage[] = [
     { role: "system", content: HAJI_PERSONA.system },
