@@ -24,6 +24,15 @@ export function useTheme() {
     } catch { /* ignore */ }
   }, []);
 
+  // In "system" mode, follow live OS light/dark changes while the app is open.
+  useEffect(() => {
+    if (theme !== "system") return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => applyTheme("system");
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [theme]);
+
   function changeTheme(t: Theme) {
     setTheme(t);
     applyTheme(t);

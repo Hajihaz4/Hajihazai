@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useRef, useCallback } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { Copy, RotateCw, Send, Square, Trash2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -14,6 +14,7 @@ const NEAR_BOTTOM_PX = 80; // px from bottom to trigger auto-scroll
 // Memoized: prevents re-render when only sidebar state changes in ChatApp.
 const Chat = memo(function Chat({
   messages,
+  conversationId,
   input,
   setInput,
   onSend,
@@ -30,9 +31,10 @@ const Chat = memo(function Chat({
   selectedBrainId,
   brainMode,
   onSelectBrain,
-  onToggleBrainMode,
+  onSetBrainMode,
 }: {
   messages: Msg[];
+  conversationId: string | null;
   input: string;
   setInput: (v: string) => void;
   onSend: () => void;
@@ -49,49 +51,69 @@ const Chat = memo(function Chat({
   selectedBrainId: string | null;
   brainMode: BrainMode;
   onSelectBrain: (id: string | null) => void;
-  onToggleBrainMode: () => void;
+  onSetBrainMode: (mode: BrainMode) => void;
 }) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // True while WE are programmatically scrolling, so the scroll handler doesn't
+  // mistake our own auto-scroll for the user scrolling away from the bottom.
+  const suppressScrollRef = useRef(false);
+  // When set, the next render jumps straight to the bottom (initial load and
+  // conversation switches), regardless of near-bottom state.
+  const needsJumpRef = useRef(true);
 
-  // Track whether user is near the bottom of the scroll container.
+  // Track whether the user is near the bottom — but ignore scroll events that
+  // our own auto-scroll generates (those would otherwise flip this false
+  // mid-scroll and strand the user above the composer after sending).
   const handleScroll = useCallback(() => {
+    if (suppressScrollRef.current) return;
     const el = scrollContainerRef.current;
     if (!el) return;
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
     isNearBottomRef.current = dist < NEAR_BOTTOM_PX;
   }, []);
 
-  // Auto-scroll using direct scrollTop to prevent upward viewport jumps.
-  useEffect(() => {
-    if (!isNearBottomRef.current) return;
+  // Instant, guarded scroll to bottom. Always direct scrollTop (never smooth)
+  // so the composer never appears to jump, and the suppress window stays tight.
+  const scrollToBottom = useCallback(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
-    const isStreaming = messages.some((m) => m.streaming);
-    if (isStreaming) {
-      el.scrollTop = el.scrollHeight;
-    } else {
-      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-    }
-  }, [messages, sending]);
+    suppressScrollRef.current = true;
+    el.scrollTop = el.scrollHeight;
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        suppressScrollRef.current = false;
+      }),
+    );
+  }, []);
 
-  // When a conversation loads (messages go from 0 → N), always jump to bottom.
-  const prevCountRef = useRef(messages.length);
+  // Switching conversations (or first load) → jump to the newest message.
   useEffect(() => {
-    const wasEmpty = prevCountRef.current === 0;
-    const hasMessages = messages.length > 0;
-    if (wasEmpty && hasMessages) {
-      const el = scrollContainerRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
-      isNearBottomRef.current = true;
-    }
-    prevCountRef.current = messages.length;
-  }, [messages.length]);
+    needsJumpRef.current = true;
+    isNearBottomRef.current = true;
+  }, [conversationId]);
 
-  // Auto-resize textarea as content changes.
-  useEffect(() => {
+  // Auto-scroll, before paint so the view follows new content with no visible
+  // jump. Jumps to bottom once a conversation finishes loading; otherwise only
+  // follows when the user is already near the bottom (never fights a scroll up).
+  useLayoutEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    if (needsJumpRef.current) {
+      if (!loading) {
+        scrollToBottom();
+        needsJumpRef.current = false;
+      }
+      return;
+    }
+    if (isNearBottomRef.current) scrollToBottom();
+  }, [messages, sending, loading, scrollToBottom]);
+
+  // Auto-resize the textarea before paint, so sending (which clears the input)
+  // never flashes a tall box that then collapses — a source of the input jump.
+  useLayoutEffect(() => {
     const ta = textareaRef.current;
     if (!ta) return;
     ta.style.height = "auto";
@@ -220,7 +242,7 @@ const Chat = memo(function Chat({
               selectedBrainId={selectedBrainId}
               brainMode={brainMode}
               onSelectBrain={onSelectBrain}
-              onToggleMode={onToggleBrainMode}
+              onSetMode={onSetBrainMode}
             />
           </div>
         )}
@@ -243,7 +265,8 @@ const Chat = memo(function Chat({
               className="max-h-40 min-h-11 flex-1 resize-none rounded-xl border bg-background px-4 py-3 text-base outline-none focus:ring-2 focus:ring-ring sm:text-sm"
             />
             <VoiceInput
-              onTranscript={(t) => setInput(input ? `${input} ${t}` : t)}
+              value={input}
+              onChange={setInput}
               disabled={isGenerating || sending}
             />
             {isGenerating ? (

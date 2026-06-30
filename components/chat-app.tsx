@@ -107,7 +107,8 @@ export default function ChatApp({
   // Brain system state
   const [brains, setBrains] = useState<BrainOption[]>([]);
   const [selectedBrainId, setSelectedBrainId] = useState<string | null>(null);
-  const [brainMode, setBrainMode] = useState<BrainMode>("manual");
+  // First-time users default to Smart; returning users are restored on mount.
+  const [brainMode, setBrainMode] = useState<BrainMode>("smart");
 
   // Delete confirmation modal
   const [pendingDelete, setPendingDelete] = useState<Conv | null>(null);
@@ -168,6 +169,14 @@ export default function ChatApp({
       }
     } catch { /**/ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Restore brain mode (Smart/Manual) after mount; first-time users stay Smart.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("hh-brain-mode");
+      if (saved === "smart" || saved === "manual") setBrainMode(saved);
+    } catch { /**/ }
   }, []);
 
   useEffect(() => {
@@ -501,8 +510,9 @@ h1{font-size:1.4rem;margin-bottom:24px;border-bottom:1px solid #e5e7eb;padding-b
     try { if (id) localStorage.setItem("hh-brain-id", id); else localStorage.removeItem("hh-brain-id"); } catch { /**/ }
   }, []);
 
-  const handleToggleBrainMode = useCallback(() => {
-    setBrainMode((m) => (m === "manual" ? "smart" : "manual"));
+  const handleSetBrainMode = useCallback((mode: BrainMode) => {
+    setBrainMode(mode);
+    try { localStorage.setItem("hh-brain-mode", mode); } catch { /**/ }
   }, []);
 
   const handleSidebarClose = useCallback(() => setSidebarOpen(false), []);
@@ -628,6 +638,7 @@ h1{font-size:1.4rem;margin-bottom:24px;border-bottom:1px solid #e5e7eb;padding-b
 
         <Chat
           messages={messages}
+          conversationId={activeId}
           input={input}
           setInput={setInput}
           onSend={send}
@@ -644,7 +655,7 @@ h1{font-size:1.4rem;margin-bottom:24px;border-bottom:1px solid #e5e7eb;padding-b
           selectedBrainId={selectedBrainId}
           brainMode={brainMode}
           onSelectBrain={handleSelectBrain}
-          onToggleBrainMode={handleToggleBrainMode}
+          onSetBrainMode={handleSetBrainMode}
         />
       </div>
 
