@@ -15,6 +15,7 @@
  *  - Global docs with a brain scope filter are still returned
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { eq } from "drizzle-orm";
 import { keywordDocumentSearch } from "@/lib/knowledge/keyword-search";
 import { buildKnowledgeContext } from "@/lib/memory/context";
 
@@ -263,7 +264,10 @@ describe.skipIf(!hasDb)("global knowledge — brain-scoped global docs (db)", ()
   afterAll(async () => {
     await cleanup(db, schema, ownerUserId, userE);
     if (testBrainId) {
-      await db.delete(schema.brains).where(schema.brains.id === testBrainId);
+      // NB: must be eq(), not `===`. A raw boolean here makes Drizzle drop the
+      // WHERE clause and delete EVERY brain — which previously wiped the
+      // production system brains when the suite ran against the live DB.
+      await db.delete(schema.brains).where(eq(schema.brains.id, testBrainId));
     }
   });
 
