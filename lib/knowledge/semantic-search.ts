@@ -15,7 +15,13 @@ import { projectScope, brainScope } from "./scope";
  *
  * Standalone: does NOT inject into prompts, does NOT touch chat, no RAG.
  */
-export const DEFAULT_DOC_SIMILARITY_THRESHOLD = 0.7;
+// Calibrated for nomic-embed-text (768-dim). Empirically the correct document is
+// the #1 semantic hit but paraphrased queries (no keyword overlap) score ~0.60–0.68,
+// so a 0.70 cut silently dropped correct matches. 0.60 restores paraphrase recall;
+// false positives are contained by brain-scoping, the parallel keyword tier, title
+// preference, and the hard char budget. (Exact-keyword queries are unaffected — the
+// keyword tier always runs alongside.)
+export const DEFAULT_DOC_SIMILARITY_THRESHOLD = 0.6;
 
 export interface DocumentSearchHit {
   documentId: string;
