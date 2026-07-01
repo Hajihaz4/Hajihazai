@@ -58,4 +58,21 @@ for (const d of docs) {
   catch (e) { console.error(`  ❌ ${d.title}: ${(e as Error).message.slice(0, 80)}`); }
 }
 console.log(`\nEmbedded ${ok}/${docs.length} documents.`);
+
+// Memories embed via a separate path (lib/memory/embed-memory) — do them here too
+// so this script is the single "re-embed everything" recovery command.
+const memOwners = await sql`
+  SELECT DISTINCT "userId" AS uid FROM user_memory WHERE status='active' AND embedding IS NULL`;
+if (memOwners.length) {
+  const { embedAllMemories } = await import("../lib/memory/embed-memory.ts");
+  let memOk = 0;
+  for (const o of memOwners) {
+    try { const r = await embedAllMemories(o.uid); memOk += r.embedded; console.log(`  ✅ memories for ${o.uid}: ${r.embedded}/${r.total}`); }
+    catch (e) { console.error(`  ❌ memories for ${o.uid}: ${(e as Error).message.slice(0, 80)}`); }
+  }
+  console.log(`Embedded ${memOk} memories across ${memOwners.length} user(s).`);
+} else {
+  console.log("Memories: all embedded (nothing to do).");
+}
+
 await audit("AFTER");
