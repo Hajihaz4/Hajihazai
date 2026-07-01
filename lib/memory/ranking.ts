@@ -68,9 +68,13 @@ export function matchesQuery(content: string, q?: string): boolean {
   if (c.includes(q.trim().toLowerCase())) return true;
   const toks = significantTokens(q);
   if (toks.length === 0) return false;
-  return toks.some(
-    (tok) => c.includes(tok) || (tok.length > 3 && tok.endsWith("s") && c.includes(tok.slice(0, -1))),
-  );
+  return toks.some((tok) => {
+    if (c.includes(tok)) return true;
+    // Light plural fold: check "-es" before "-s" ("buses"→"bus", "goals"→"goal").
+    if (tok.length > 4 && tok.endsWith("es") && c.includes(tok.slice(0, -2))) return true;
+    if (tok.length > 3 && tok.endsWith("s") && c.includes(tok.slice(0, -1))) return true;
+    return false;
+  });
 }
 
 export function rankMemories<T extends Rankable>(

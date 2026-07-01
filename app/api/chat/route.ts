@@ -34,6 +34,7 @@ import { buildConversationTurns } from "@/lib/ai/conversation-turns";
 import { needsResolution, resolveReference } from "@/lib/ai/reference-resolution";
 import { detectMultiBrainScope } from "@/lib/ai/multi-brain";
 import { splitForDigest, renderConversationDigest } from "@/lib/ai/conversation-summary";
+import { sanitizeQueryForLog } from "@/lib/admin/analytics";
 
 const CHAT_RATE_LIMIT = 30;
 const CHAT_RATE_WINDOW_MS = 60_000;
@@ -252,7 +253,7 @@ export async function POST(req: Request) {
     wasClarify: !!clarifyBlock,
     wasZeroResult: wantKnowledge && knowledge.count === 0,
     sources: [...new Set(knowledge.chunks.map((c) => c.title))],
-    query: message.trim().slice(0, 160),
+    query: sanitizeQueryForLog(message),
   };
 
   let toolBlock = "";
@@ -275,7 +276,20 @@ export async function POST(req: Request) {
   // Long-conversation summarization (Phase B): keep the recent turns verbatim and
   // condense everything older into a compact recap that preserves entities, goals,
   // and topics — bounding prompt size without losing continuity.
-  const { older, recent } = splitForDigest(history, 14);
+  // On regenerate, the reply being re-answered is for a specific past user
+  // message; exclude anything after it so BOTH the recap and the turns reflect
+  // context only up to that message (not later turns).
+  let effectiveHistory = history;
+  if (regenerate) {
+    const target = message.trim();
+    for (let i = history.length - 1; i >= 0; i--) {
+      if (history[i].role === "user" && history[i].content.trim() === target) {
+        effectiveHistory = history.slice(0, i + 1);
+        break;
+      }
+    }
+  }
+  const { older, recent } = splitForDigest(effectiveHistory, 14);
   // Summarization must never break chat — fall back to no recap on any error.
   let digestBlock: string | null = null;
   try {
@@ -349,17 +363,23 @@ export async function POST(req: Request) {
       let title = convo.title;
       const latencyMs = Date.now() - startMs;
       if (!debug) {
-        const assistantMsg = await addMessage({
-          conversationId,
-          role: "assistant",
-          content: fullText,
-          modelId: streamResult.modelId,
-          metadata: retrievalMeta,
-        });
-        assistantMsgId = assistantMsg.id;
-        if (convo.title === "New chat") {
-          title = message.trim().slice(0, 60);
-          await setConversationTitle(session.user.id, conversationId, title);
+        // Persistence must never crash the stream — the reply already streamed to
+        // the client. On DB failure, log and still send the "done" event below.
+        try {
+          const assistantMsg = await addMessage({
+            conversationId,
+            role: "assistant",
+            content: fullText,
+            modelId: streamResult.modelId,
+            metadata: retrievalMeta,
+          });
+          assistantMsgId = assistantMsg.id;
+          if (convo.title === "New chat") {
+            title = message.trim().slice(0, 60);
+            await setConversationTitle(session.user.id, conversationId, title);
+          }
+        } catch (err) {
+          console.error("[chat] post-stream persistence failed:", err);
         }
       }
 

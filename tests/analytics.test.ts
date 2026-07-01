@@ -9,6 +9,7 @@ import {
   topQueries,
   computeRetrievalAnalytics,
   eventFromMetadata,
+  sanitizeQueryForLog,
   type RetrievalEvent,
 } from "@/lib/admin/analytics";
 
@@ -85,6 +86,22 @@ describe("retrieval analytics aggregators", () => {
     expect(eventFromMetadata({ kind: "something-else" })).toBeNull();
     expect(eventFromMetadata(null)).toBeNull();
     expect(eventFromMetadata("nope")).toBeNull();
+  });
+
+  it("redacts PII from logged queries (email, phone, long digit runs)", () => {
+    expect(sanitizeQueryForLog("email me at haji@example.com please")).toContain("[email]");
+    expect(sanitizeQueryForLog("email me at haji@example.com please")).not.toContain("@example.com");
+    expect(sanitizeQueryForLog("call +1 415 555 1234 now")).toMatch(/\[phone\]/);
+    expect(sanitizeQueryForLog("my card 4111111111111111")).toMatch(/\[(number|phone)\]/);
+    expect(sanitizeQueryForLog("who is haji")).toBe("who is haji");
+  });
+
+  it("topQueries preserves first-seen original casing", () => {
+    const q = topQueries([
+      ev({ query: "what is Article 21" }),
+      ev({ query: "What Is Article 21" }),
+    ]);
+    expect(q[0]).toEqual({ query: "what is Article 21", count: 2 });
   });
 
   it("handles an empty event set without throwing", () => {

@@ -16,6 +16,22 @@ import { messages } from "@/lib/db/schema";
 
 export const RETRIEVAL_EVENT_KIND = "retrieval" as const;
 
+/**
+ * Redact obvious PII before a query is persisted for analytics. Emails, phone
+ * numbers, and long digit runs (cards / SSNs / account numbers) are masked so
+ * the admin "top queries" view never surfaces raw sensitive data. Names are not
+ * detectable heuristically and are out of scope; the query is also truncated by
+ * the caller. Applied at write time so nothing sensitive lands in the DB.
+ */
+export function sanitizeQueryForLog(q: string, maxLen = 160): string {
+  return q
+    .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[email]")
+    .replace(/\b(?:\+?\d[\d\s().-]{7,}\d)\b/g, "[phone]")
+    .replace(/\b\d{6,}\b/g, "[number]")
+    .trim()
+    .slice(0, maxLen);
+}
+
 export interface RetrievalEvent {
   brainSlug: string | null;
   brainMode: "smart" | "manual";
@@ -103,14 +119,18 @@ export function topDocuments(events: RetrievalEvent[], n = 10): Array<{ title: s
 }
 
 export function topQueries(events: RetrievalEvent[], n = 10): Array<{ query: string; count: number }> {
-  const m = new Map<string, number>();
+  // Dedup case-insensitively but display the first-seen original casing.
+  const m = new Map<string, { display: string; count: number }>();
   for (const e of events) {
-    const q = e.query.trim().toLowerCase();
-    if (!q) continue;
-    m.set(q, (m.get(q) ?? 0) + 1);
+    const raw = e.query.trim();
+    if (!raw) continue;
+    const key = raw.toLowerCase();
+    const cur = m.get(key);
+    if (cur) cur.count++;
+    else m.set(key, { display: raw, count: 1 });
   }
-  return [...m.entries()]
-    .map(([query, count]) => ({ query, count }))
+  return [...m.values()]
+    .map((v) => ({ query: v.display, count: v.count }))
     .sort((a, b) => b.count - a.count || a.query.localeCompare(b.query))
     .slice(0, n);
 }

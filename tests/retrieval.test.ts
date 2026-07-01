@@ -48,6 +48,12 @@ describe("retrieval ranking & search", () => {
     expect(matchesQuery("Favorite car is Lexus", "tell me a joke")).toBe(false);
   });
 
+  it("folds -es plurals as well as -s plurals", () => {
+    expect(matchesQuery("commutes by bus daily", "which buses does he take")).toBe(true); // buses→bus
+    expect(matchesQuery("attends many classes", "what classes")).toBe(true);              // classes→class (substring)
+    expect(matchesQuery("Five-year goal", "his goals")).toBe(true);                        // goals→goal
+  });
+
   it("significantTokens drops stopwords and the ubiquitous 'haji' token", () => {
     expect(significantTokens("what are haji's goals")).toEqual(["goals"]);
     expect(significantTokens("who is haji")).toEqual([]);

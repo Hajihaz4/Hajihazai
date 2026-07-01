@@ -60,6 +60,36 @@ describe("buildConversationTurns", () => {
     expect(last(turns)).toEqual({ role: "user", content: "who is haji" });
   });
 
+  // C2 — regenerate with LATER turns still in the window (summarization case):
+  // the target must become the final turn (drop trailing turns).
+  it("C2: regenerate makes the target the final turn even when later turns remain", () => {
+    const history = [
+      u("1", "who is haji"),
+      a("2", "Haji is …"),
+      u("3", "who is alim"), // regenerate target
+      a("4", "Alim is …"),
+      u("5", "what is allbee"),
+      a("6", "AllBee is …"),
+    ];
+    const turns = buildConversationTurns(history, "who is alim", {
+      regenerate: true,
+      currentUserMessageId: null,
+    });
+    expect(last(turns)).toEqual({ role: "user", content: "who is alim" });
+    // Nothing after the target should remain.
+    expect(turns.some((t) => t.content === "what is allbee")).toBe(false);
+  });
+
+  // C3 — regenerate target scrolled out of the window → append so it's answered.
+  it("C3: regenerate appends the target when it is not in the window", () => {
+    const history = [u("9", "later question"), a("10", "later answer")];
+    const turns = buildConversationTurns(history, "old regenerated question", {
+      regenerate: true,
+      currentUserMessageId: null,
+    });
+    expect(last(turns)).toEqual({ role: "user", content: "old regenerated question" });
+  });
+
   // D — debug behaves identically to non-debug
   it("D: debug and non-debug produce the same final turns", () => {
     const history = [u("1", "who is alim"), a("2", "Alim is …")];
