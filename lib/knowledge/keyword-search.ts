@@ -8,9 +8,11 @@ import type { DocumentSearchHit } from "./semantic-search";
  * Keyword retrieval over knowledge chunks — the reliable fallback that works
  * even when chunks are NOT embedded or the embedding provider is down.
  *
- * Ranks chunks by how many distinct query terms appear in them (ILIKE). Active,
- * owned, project-scoped. This is what guarantees stored knowledge is actually
- * used (semantic search silently returns nothing for un-embedded chunks).
+ * Ranks by query-term matches in the chunk (ILIKE), with a boost for matches in
+ * the document TITLE (exact-title / article-number preference). Numeric tokens
+ * (e.g. "14", "21", "32") are preserved so "article 14" ranks Article 14 first.
+ * Small typos in entity/person names are fuzzy-corrected so "hajij"→haji,
+ * "alimm"→alim, "safna"→safina still retrieve the right documents.
  */
 
 const STOPWORDS = new Set([
@@ -21,16 +23,50 @@ const STOPWORDS = new Set([
   "that", "these", "those", "from", "about",
 ]);
 
+/** Known entity / person / place / business names for typo correction. */
+const ENTITY_VOCAB = [
+  "haji", "alim", "safina", "shehnaz", "nisha", "sahabuddin", "hamza",
+  "hidhayaa", "kabeer", "azees", "kaif", "abul", "selva", "sundar", "hussain",
+  "meeran", "mohamed", "backer", "allbee", "suplaykart", "nagore", "chennai",
+];
+
 export function tokenize(query: string): string[] {
   const seen = new Set<string>();
   for (const raw of query.toLowerCase().split(/[^a-z0-9]+/)) {
-    // Require ≥3 chars: 2-char tokens (hi, ok, yo) match '%xx%' across the whole
-    // corpus (e.g. "hi" matched 19 chunks via "this"/"his"/"within"), injecting
-    // unrelated knowledge. Numbers are kept (e.g. a year like "2013" → still ≥3).
-    if (raw.length < 3 || STOPWORDS.has(raw)) continue;
+    // Require ≥3 chars, EXCEPT pure numbers (e.g. article "14"/"21"/"32", years)
+    // which are legal/reference-bearing and must not be discarded. Short words
+    // (hi, ok) still dropped — they ILIKE-match across the whole corpus.
+    const isNumber = /^\d+$/.test(raw);
+    if ((raw.length < 3 && !isNumber) || STOPWORDS.has(raw)) continue;
     seen.add(raw);
   }
   return [...seen];
+}
+
+function editDistance(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+  return dp[m][n];
+}
+
+/** For a small-typo token, the canonical entity name it likely refers to. */
+function fuzzyEntity(token: string): string | null {
+  if (token.length < 4) return null;
+  for (const e of ENTITY_VOCAB) {
+    if (Math.abs(token.length - e.length) <= 1 && editDistance(token, e) === 1) return e;
+  }
+  return null;
+}
+
+/** Query terms + fuzzy-corrected entity names for typo tolerance. */
+export function expandedTerms(query: string): string[] {
+  const base = tokenize(query);
+  const extra = base.map(fuzzyEntity).filter((e): e is string => e !== null);
+  return [...new Set([...base, ...extra])];
 }
 
 export async function keywordDocumentSearch(
@@ -38,24 +74,26 @@ export async function keywordDocumentSearch(
   query: string,
   opts: { projectId?: string | null; brainId?: string | null; limit?: number } = {},
 ): Promise<DocumentSearchHit[]> {
-  const terms = tokenize(query);
+  const terms = expandedTerms(query);
   if (terms.length === 0) return [];
   const limit = opts.limit ?? 10;
 
-  const score = sql<number>`(${sql.join(
-    terms.map(
-      (t) =>
-        sql`(case when ${knowledgeChunk.content} ilike ${"%" + t + "%"} then 1 else 0 end)`,
-    ),
+  // Content matches (+1 each) plus a TITLE match boost (+2 each) so exact-title
+  // and article-number references rank first.
+  const contentScore = sql.join(
+    terms.map((t) => sql`(case when ${knowledgeChunk.content} ilike ${"%" + t + "%"} then 1 else 0 end)`),
     sql` + `,
-  )})`;
+  );
+  const titleScore = sql.join(
+    terms.map((t) => sql`(case when ${knowledgeDocument.title} ilike ${"%" + t + "%"} then 2 else 0 end)`),
+    sql` + `,
+  );
+  const score = sql<number>`((${contentScore}) + (${titleScore}))`;
   const anyMatch = sql`(${sql.join(
-    terms.map((t) => sql`${knowledgeChunk.content} ilike ${"%" + t + "%"}`),
+    terms.map((t) => sql`(${knowledgeChunk.content} ilike ${"%" + t + "%"} or ${knowledgeDocument.title} ilike ${"%" + t + "%"})`),
     sql` or `,
   )})`;
 
-  // Private docs: user owns them AND they pass the project scope filter.
-  // Global docs: visible to all users regardless of ownership or project.
   const privateOwner =
     opts.projectId !== undefined
       ? and(eq(knowledgeDocument.userId, userId), projectScope(opts.projectId)!)
@@ -71,10 +109,7 @@ export async function keywordDocumentSearch(
       score,
     })
     .from(knowledgeChunk)
-    .innerJoin(
-      knowledgeDocument,
-      eq(knowledgeChunk.documentId, knowledgeDocument.id),
-    )
+    .innerJoin(knowledgeDocument, eq(knowledgeChunk.documentId, knowledgeDocument.id))
     .where(
       and(
         ownerClause,
