@@ -33,6 +33,12 @@ export type MsgMeta = {
   brainId?: string | null;
   brainSlug?: string | null;
   brainMode?: string | null;
+  brainConfidence?: number | null;
+  brainMatched?: string[] | null;
+  brainReason?: string | null;
+  knowledgeCount?: number | null;
+  memoryCount?: number | null;
+  retrievalMethod?: string | null;
 };
 export type Msg = {
   id: string;

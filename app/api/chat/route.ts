@@ -91,7 +91,11 @@ export async function POST(req: Request) {
   // ── Phase 1: all independent lookups run in parallel ─────────────────────
   // None of these depend on each other; they only need userId + message.
   const effectiveBrainMode: BrainMode = brainMode === "smart" ? "smart" : "manual";
-  const resolvedBrainSlug = effectiveBrainMode === "smart" ? routeToBrain(message) : null;
+  // Smart routing → { brain, confidence, matchedKeywords, reason }. brain may be
+  // null (no match / low confidence) — we then clarify / answer without a brain
+  // rather than silently defaulting to haji-core.
+  const route = effectiveBrainMode === "smart" ? routeToBrain(message) : null;
+  const resolvedBrainSlug = route?.brain ?? null;
 
   // Greetings / low-information acknowledgements ("hi", "thanks", "ok") must not
   // trigger RAG — otherwise memory + knowledge get injected into small talk.
@@ -132,12 +136,22 @@ export async function POST(req: Request) {
       ? clientBrainId
       : null;
 
+  // Smart mode that produced no confident brain → skip brain-scoped knowledge
+  // retrieval (never fall through to an unscoped "search everything"), and hint
+  // the model to ask which area the user means when the question looks domain-
+  // specific (Phase D — no silent routing).
+  const smartUnrouted = effectiveBrainMode === "smart" && resolvedBrainId === null;
+  const wantKnowledge = wantRetrieval && !smartUnrouted;
+  const clarifyBlock = smartUnrouted && wantRetrieval
+    ? "SYSTEM: The smart router could not confidently pick a knowledge brain for this message. If the question clearly refers to the user's specific businesses (AllBee, Suplaykart), their personal/family life, or law, ask a brief clarifying question about which area they mean before answering. Otherwise answer normally from general knowledge."
+    : "";
+
   // ── Phase 2: parallel lookups that depend on convo.projectId + brainId ──
   // addMessage also runs here — ownership is confirmed above, and Phase 2
   // completes before streaming starts so userMsg is available for the SSE event.
   const [project, knowledge, history, userMsgResult] = await Promise.all([
     projectId ? getProject(session.user.id, projectId) : Promise.resolve(null),
-    wantRetrieval
+    wantKnowledge
       ? buildKnowledgeContext(session.user.id, {
           query: message,
           projectId,
@@ -187,6 +201,7 @@ export async function POST(req: Request) {
     ...(knowledge.block ? [{ role: "system" as const, content: knowledge.block }] : []),
     ...(toolBlock ? [{ role: "system" as const, content: toolBlock }] : []),
     ...(writeIntentBlock ? [{ role: "system" as const, content: writeIntentBlock }] : []),
+    ...(clarifyBlock ? [{ role: "system" as const, content: clarifyBlock }] : []),
     ...historyMessages,
   ];
 
@@ -268,6 +283,16 @@ export async function POST(req: Request) {
                   brainId: resolvedBrainId,
                   brainSlug: resolvedBrainSlug,
                   brainMode: effectiveBrainMode,
+                  brainConfidence: route?.confidence ?? null,
+                  brainMatched: route?.matchedKeywords ?? null,
+                  brainReason: route?.reason ?? (clarifyBlock ? "clarification requested" : null),
+                  knowledgeCount: knowledge.count,
+                  memoryCount: memory.count,
+                  retrievalMethod: !wantKnowledge
+                    ? "none"
+                    : memory.fallbackUsed
+                    ? "keyword-fallback"
+                    : "semantic",
                 },
               }
             : {}),

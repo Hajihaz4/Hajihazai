@@ -338,9 +338,20 @@ function DebugPanel({ meta }: { meta: NonNullable<Msg["meta"]> }) {
           fallback: {meta.fallbackFrom} → {meta.model} (attempts {meta.attempts ?? "—"})
         </div>
       ) : null}
-      {meta.brainSlug || meta.brainId ? (
-        <div className="text-violet-500">
-          brain: {meta.brainSlug ?? meta.brainId} · mode: {meta.brainMode ?? "manual"}
+      {meta.brainMode || meta.brainSlug || meta.brainId ? (
+        <div className="mt-1 border-t border-border/40 pt-1 text-violet-500">
+          <div>
+            brain: {meta.brainSlug ?? "none"} · mode: {meta.brainMode ?? "manual"}
+            {typeof meta.brainConfidence === "number" ? ` · confidence: ${meta.brainConfidence}%` : ""}
+          </div>
+          {meta.brainMatched && meta.brainMatched.length ? (
+            <div>matched: {meta.brainMatched.join(", ")}</div>
+          ) : null}
+          {meta.brainReason ? <div>reason: {meta.brainReason}</div> : null}
+          <div>
+            retrieved → docs: {meta.knowledgeCount ?? 0} · memories: {meta.memoryCount ?? 0}
+            {meta.retrievalMethod ? ` · method: ${meta.retrievalMethod}` : ""}
+          </div>
         </div>
       ) : null}
     </div>
