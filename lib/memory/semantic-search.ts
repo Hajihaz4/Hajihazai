@@ -12,7 +12,11 @@ import { embed } from "@/lib/ai/embeddings/router";
  * This is a standalone service: it does NOT inject into prompts, does NOT
  * touch the chat route, and does NOT replace keyword retrieval.
  */
-export const DEFAULT_SIMILARITY_THRESHOLD = 0.7;
+// Calibrated for nomic-embed-text on short atomic memories, which score lower
+// than long documents. 0.70 dropped essentially every match (memories score
+// ~0.55–0.65); 0.62 admits genuine semantic matches while the keyword tier +
+// type ranking + char budget keep the generic identity memory from dominating.
+export const DEFAULT_SIMILARITY_THRESHOLD = 0.62;
 
 export interface SemanticHit {
   id: string;

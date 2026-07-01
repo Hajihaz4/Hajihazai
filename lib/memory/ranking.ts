@@ -34,14 +34,43 @@ export function scoreMemory(m: Rankable, now: number): number {
   return Number((typeWeight(m.type) + recency).toFixed(4));
 }
 
-/** Case-insensitive keyword match: full-query substring OR all tokens present. */
+/**
+ * Stopwords + "haji"/"hajis" (present in nearly every memory, so useless as a
+ * discriminator). Excluded from keyword matching so a natural-language question
+ * matches on its CONTENT words, not filler.
+ */
+const MEMORY_STOPWORDS = new Set([
+  "what", "whats", "who", "whos", "whose", "when", "where", "why", "how", "which",
+  "is", "are", "was", "were", "be", "am", "do", "does", "did", "has", "have", "had",
+  "the", "a", "an", "of", "to", "in", "on", "at", "for", "and", "or", "with", "about",
+  "his", "her", "hers", "their", "them", "he", "she", "they", "it", "its", "that", "this",
+  "tell", "me", "give", "list", "show", "haji", "hajis", "you", "your", "please",
+]);
+
+/** Content words (≥3 chars, non-stopword) from a query. */
+export function significantTokens(q: string): string[] {
+  return q
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length >= 3 && !MEMORY_STOPWORDS.has(t));
+}
+
+/**
+ * Case-insensitive keyword match. Matches when the full query is a substring, or
+ * when the content shares ANY significant token with the query (with a light
+ * trailing-'s' plural fold so "goals" matches "goal"). A query made only of
+ * stopwords matches nothing (so low-information turns never dump every memory).
+ * Result volume is bounded downstream by the memory char budget + type ranking.
+ */
 export function matchesQuery(content: string, q?: string): boolean {
   if (!q || !q.trim()) return true;
   const c = content.toLowerCase();
-  const query = q.trim().toLowerCase();
-  if (c.includes(query)) return true;
-  const tokens = query.split(/\s+/).filter(Boolean);
-  return tokens.length > 0 && tokens.every((tok) => c.includes(tok));
+  if (c.includes(q.trim().toLowerCase())) return true;
+  const toks = significantTokens(q);
+  if (toks.length === 0) return false;
+  return toks.some(
+    (tok) => c.includes(tok) || (tok.length > 3 && tok.endsWith("s") && c.includes(tok.slice(0, -1))),
+  );
 }
 
 export function rankMemories<T extends Rankable>(

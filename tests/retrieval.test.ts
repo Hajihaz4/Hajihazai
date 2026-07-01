@@ -4,6 +4,7 @@ import {
   scoreMemory,
   matchesQuery,
   rankMemories,
+  significantTokens,
 } from "@/lib/memory/ranking";
 
 const NOW = 1_800_000_000_000;
@@ -34,6 +35,22 @@ describe("retrieval ranking & search", () => {
     expect(matchesQuery("Banks with LLB", "LLB")).toBe(true);
     expect(matchesQuery("Likes coffee", "Suplaykart")).toBe(false);
     expect(matchesQuery("anything", "")).toBe(true);
+  });
+
+  it("matches natural-language questions on content words (with plural fold)", () => {
+    // "goals" (query) folds to "goal" (memory); "haji" + filler are ignored.
+    expect(matchesQuery("Five-year goal: become a lawyer", "what are haji's goals")).toBe(true);
+    expect(matchesQuery("Not currently in a romantic relationship", "is haji in a relationship")).toBe(true);
+    expect(matchesQuery("Hobbies: football and cricket", "what are his hobbies")).toBe(true);
+    // A query of only stopwords/"haji" must NOT match everything (no dumping).
+    expect(matchesQuery("Full name is Syed", "who is haji")).toBe(false);
+    // Unrelated question still doesn't match.
+    expect(matchesQuery("Favorite car is Lexus", "tell me a joke")).toBe(false);
+  });
+
+  it("significantTokens drops stopwords and the ubiquitous 'haji' token", () => {
+    expect(significantTokens("what are haji's goals")).toEqual(["goals"]);
+    expect(significantTokens("who is haji")).toEqual([]);
   });
 
   it("ranks then filters via rankMemories", () => {
