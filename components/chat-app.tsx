@@ -103,6 +103,9 @@ export default function ChatApp({
   const [debug, setDebug] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // Synchronous concurrency guard — React state lags a frame, so a ref is what
+  // actually blocks a second send while a response is still generating.
+  const generatingRef = useRef(false);
 
   // Refs for keyboard shortcuts
   const sidebarSearchRef = useRef<HTMLInputElement | null>(null);
@@ -378,7 +381,7 @@ h1{font-size:1.4rem;margin-bottom:24px;border-bottom:1px solid #e5e7eb;padding-b
 
   function send() {
     const text = input.trim();
-    if (!text || sending) return;
+    if (!text || generatingRef.current) return; // block duplicate/concurrent sends
     setInput("");
     const localId = uuid();
     setMessages((p) => [...p, { id: localId, role: "user", content: text, isNew: true }]);
@@ -386,13 +389,15 @@ h1{font-size:1.4rem;margin-bottom:24px;border-bottom:1px solid #e5e7eb;padding-b
   }
 
   async function runChat(text: string, opts: { userLocalId?: string; regenerate?: boolean }) {
-    if (sending) return;
+    if (generatingRef.current) return; // never run two generations at once
+    generatingRef.current = true;
     setSending(true);
     setIsGenerating(true);
 
     let convId = activeId;
     const streamMsgId = uuid();
     let addedStreamMsg = false;
+    let assistantShown = false; // ensures the user message gets exactly one reply
 
     try {
       if (!convId) {
@@ -452,6 +457,7 @@ h1{font-size:1.4rem;margin-bottom:24px;border-bottom:1px solid #e5e7eb;padding-b
                   { id: streamMsgId, role: "assistant" as const, content: event.text, streaming: true, isNew: true },
                 ]);
                 addedStreamMsg = true;
+                assistantShown = true;
               } else {
                 setMessages((p) =>
                   p.map((m) =>
@@ -479,6 +485,7 @@ h1{font-size:1.4rem;margin-bottom:24px;border-bottom:1px solid #e5e7eb;padding-b
               }
             } else if (event.t === "error") {
               setSending(false);
+              assistantShown = true;
               setMessages((p) => [
                 ...p,
                 { id: uuid(), role: "assistant" as const, content: "⚠️ Something went wrong. Please try again.", error: true, retryText: text, isNew: true },
@@ -489,6 +496,7 @@ h1{font-size:1.4rem;margin-bottom:24px;border-bottom:1px solid #e5e7eb;padding-b
       }
     } catch (err) {
       const aborted = (err as { name?: string })?.name === "AbortError";
+      assistantShown = true;
       setMessages((p) => [
         ...p,
         {
@@ -500,6 +508,7 @@ h1{font-size:1.4rem;margin-bottom:24px;border-bottom:1px solid #e5e7eb;padding-b
         },
       ]);
     } finally {
+      generatingRef.current = false;
       setSending(false);
       setIsGenerating(false);
       abortRef.current = null;
@@ -507,6 +516,12 @@ h1{font-size:1.4rem;margin-bottom:24px;border-bottom:1px solid #e5e7eb;padding-b
         setMessages((p) =>
           p.map((m) => (m.id === streamMsgId && m.streaming ? { ...m, streaming: false } : m)),
         );
+      } else if (!assistantShown) {
+        // Stream ended with no content and no error → guarantee exactly one reply.
+        setMessages((p) => [
+          ...p,
+          { id: uuid(), role: "assistant", content: "⚠️ No response received. Please try again.", error: true, retryText: text, isNew: true },
+        ]);
       }
     }
   }
