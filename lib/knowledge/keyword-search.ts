@@ -88,7 +88,14 @@ export async function keywordDocumentSearch(
     terms.map((t) => sql`(case when ${knowledgeDocument.title} ilike ${"%" + t + "%"} then 2 else 0 end)`),
     sql` + `,
   );
-  const score = sql<number>`((${contentScore}) + (${titleScore}))`;
+  // Entity boost — founder / ownership / CEO queries strongly prefer the document
+  // whose TITLE is "…Founders" (the authoritative source for those facts), so
+  // "who founded allbee" ranks AllBee — Founders #1 over Company Overview.
+  const foundingQuery = /\b(found|founder|founded|founding|owner|ownership|owns|ceo|cfo)\b/.test(query.toLowerCase());
+  const founderBoost = foundingQuery
+    ? sql`(case when ${knowledgeDocument.title} ilike ${"%founder%"} then 5 else 0 end)`
+    : sql`0`;
+  const score = sql<number>`((${contentScore}) + (${titleScore}) + (${founderBoost}))`;
   const anyMatch = sql`(${sql.join(
     terms.map((t) => sql`(${knowledgeChunk.content} ilike ${"%" + t + "%"} or ${knowledgeDocument.title} ilike ${"%" + t + "%"})`),
     sql` or `,
