@@ -129,6 +129,29 @@ function renderKnowledgeBlock(selected: DocumentSearchHit[]): string {
   return parts.join("\n\n");
 }
 
+/**
+ * Merge per-brain retrieval results into a single chunk list, deduped by chunkId.
+ *
+ * A brain's scope includes NULL-brain (unassigned/global) documents, so the same
+ * chunk can appear in several brains' results during a multi-brain merge. Dedup
+ * by chunkId, preserving first-seen order, so a shared document is rendered once.
+ */
+export function mergeBrainChunks(
+  results: Array<{ chunks: DocumentSearchHit[] }>,
+): DocumentSearchHit[] {
+  const seen = new Set<string>();
+  const merged: DocumentSearchHit[] = [];
+  for (const r of results) {
+    for (const c of r.chunks) {
+      if (!seen.has(c.chunkId)) {
+        seen.add(c.chunkId);
+        merged.push(c);
+      }
+    }
+  }
+  return merged;
+}
+
 /** Pure block builder — greedily include chunks while staying within budget. */
 export function buildKnowledgeBlock(
   hits: DocumentSearchHit[],

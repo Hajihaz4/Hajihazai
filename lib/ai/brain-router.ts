@@ -38,6 +38,7 @@ const BRAIN_RULES: Array<{ slug: string; keywords: readonly string[]; weight: nu
       "defendant", "section", "act", "legislation", "jurisdiction", "precedent",
       "tort", "criminal", "civil", "exam", "srm school of law", "penal",
       "fundamental rights", "writ", "petition", "amendment",
+      "negligence", "directive principles", "dpsp",
     ],
   },
   {
@@ -78,6 +79,7 @@ const BRAIN_RULES: Array<{ slug: string; keywords: readonly string[]; weight: nu
       "hobby", "hobbies", "birthday", "born", "home", "religion", "identity",
       "life", "relationship", "girlfriend", "safina", "safina thangam", "hamza",
       "sahabuddin", "hidhayaa", "shehnaz", "hussain sahib", "kabeer",
+      "azees", "selva", "sundar", "kaif", "abul", "meeran",
       "family tree", "sister", "aunt", "cousin", "uncle", "grandfather",
       "grandmother", "paternal", "maternal", "relative",
     ],
@@ -99,8 +101,19 @@ function editDistance(a: string, b: string): number {
   return dp[m][n];
 }
 
+/**
+ * Short, generic keywords whose edit-distance-1 neighbourhood contains common
+ * English words (writ←write, tort←sort/port, born←barn/corn, shop←stop/ship,
+ * goal←coal/goat, home←hope/hose, life←like/line). Fuzzy-matching these misroutes
+ * ordinary requests — e.g. "write a poem" → legal. They still match EXACTLY; we
+ * only suppress their fuzzy neighbourhood. Proper nouns (haji, alim, suplaykart,
+ * article, …) keep fuzzy tolerance so typos still route.
+ */
+const NO_FUZZY = new Set(["writ", "tort", "born", "shop", "goal", "goals", "home", "life"]);
+
 /** A query token fuzzy-matches a single-word keyword (small typo tolerance). */
 function fuzzyMatches(token: string, kw: string): boolean {
+  if (NO_FUZZY.has(kw)) return false;
   if (token.length < 4 || kw.length < 4) return false;
   if (Math.abs(token.length - kw.length) > 1) return false;
   return editDistance(token, kw) === 1;

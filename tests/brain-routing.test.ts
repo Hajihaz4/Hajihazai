@@ -47,6 +47,22 @@ describe("smart brain routing", () => {
     expect(routeToBrain("what is computer").confidence).toBe(0);
   });
 
+  it("does NOT fuzzy-misroute common words to legal (writ←write, tort←sort)", () => {
+    // Red-team regression: "write a poem" previously matched legal keyword "writ".
+    expect(routeToBrain("write a poem about the sea").brain).toBeNull();
+    expect(routeToBrain("write me an essay").brain).toBeNull();
+    expect(routeToBrain("sort these numbers").brain).toBeNull();
+    // But an exact legal writ query still routes to legal.
+    expect(routeToBrain("what is a writ petition").brain).toBe("legal");
+  });
+
+  it("routes named friends/relatives and extra legal terms (recall gaps)", () => {
+    expect(routeToBrain("who is azees").brain).toBe("haji-core");
+    expect(routeToBrain("who are selva and sundar").brain).toBe("haji-core");
+    expect(routeToBrain("what is negligence").brain).toBe("legal");
+    expect(routeToBrain("what are directive principles").brain).toBe("legal");
+  });
+
   it("reports confidence, matched keywords, and a reason", () => {
     const r = routeToBrain("what is judicial review");
     expect(r.brain).toBe("legal");

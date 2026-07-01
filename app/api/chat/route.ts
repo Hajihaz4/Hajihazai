@@ -19,6 +19,8 @@ import { getBrainBySlug } from "@/lib/db/brain-queries";
 import {
   buildMemoryContext,
   buildKnowledgeContext,
+  buildKnowledgeBlock,
+  mergeBrainChunks,
 } from "@/lib/memory/context";
 import {
   selectAndRunTool,
@@ -43,8 +45,14 @@ function sse(obj: unknown): Uint8Array {
 
 /**
  * Multi-brain retrieval (Phase 4): retrieve from several brains and merge.
- * Brains are disjoint (a document belongs to one brain), so no cross-brain dedup
- * is needed. Legal is excluded by the detector, preserving legal isolation.
+ *
+ * A brain's retrieval scope is "docs in that brain PLUS docs with no brain
+ * assigned" (see brainScope). So documents with a NULL brain_id — the default
+ * for user uploads and any unbranded ingest — appear in EVERY brain's result
+ * set. Naively concatenating per-brain blocks therefore duplicates those docs
+ * once per brain and triples the char budget. We instead collect the hits from
+ * every brain, dedup by chunkId, and render ONCE under a single budget. Legal is
+ * excluded by the detector, preserving legal isolation.
  */
 async function retrieveMultiBrain(
   userId: string,
@@ -62,11 +70,11 @@ async function retrieveMultiBrain(
       ),
     )
   ).filter((r): r is NonNullable<typeof r> => r !== null);
-  return {
-    block: results.map((r) => r.block).filter(Boolean).join("\n\n"),
-    chunks: results.flatMap((r) => r.chunks),
-    count: results.reduce((s, r) => s + r.count, 0),
-  };
+
+  // Dedup across brains by chunkId (null-brain/global docs land in every brain's
+  // scope), preserving first-seen order, then render once under one budget.
+  const { block, used, count } = buildKnowledgeBlock(mergeBrainChunks(results));
+  return { block, chunks: used, count };
 }
 
 export async function POST(req: Request) {
