@@ -39,6 +39,9 @@ export type MsgMeta = {
   knowledgeCount?: number | null;
   memoryCount?: number | null;
   retrievalMethod?: string | null;
+  sources?: string[] | null;
+  referenceEntity?: string | null;
+  referenceReason?: string | null;
 };
 export type Msg = {
   id: string;

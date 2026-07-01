@@ -29,6 +29,7 @@ import { shouldRetrieve } from "@/lib/ai/should-retrieve";
 import { wrapToolOutput } from "@/lib/tools/output-guard";
 import type { ChatMessage } from "@/lib/ai/types";
 import { buildConversationTurns } from "@/lib/ai/conversation-turns";
+import { needsResolution, resolveReference } from "@/lib/ai/reference-resolution";
 
 const CHAT_RATE_LIMIT = 30;
 const CHAT_RATE_WINDOW_MS = 60_000;
@@ -88,13 +89,25 @@ export async function POST(req: Request) {
     return new Response(`message exceeds ${MESSAGE_MAX_CHARS} characters`, { status: 413 });
   }
 
+  // Reference resolution (Phase 3): if the message uses a pronoun with no named
+  // entity ("where does he study?"), resolve it to the most recent conversation
+  // entity so routing + retrieval target the intended subject. History is only
+  // fetched when a pronoun is present (no cost otherwise). The user-facing message
+  // and stored history are unchanged — only the routing/retrieval query is enriched.
+  let retrievalQuery = message;
+  let refInfo: ReturnType<typeof resolveReference> | null = null;
+  if (needsResolution(message)) {
+    const prior = await listRecentMessages(conversationId, 8).catch(() => []);
+    refInfo = resolveReference(message, prior.filter((m) => m.role === "user").map((m) => m.content));
+    retrievalQuery = refInfo.resolved;
+  }
+
   // ── Phase 1: all independent lookups run in parallel ─────────────────────
-  // None of these depend on each other; they only need userId + message.
+  // None of these depend on each other; they only need userId + retrievalQuery.
   const effectiveBrainMode: BrainMode = brainMode === "smart" ? "smart" : "manual";
   // Smart routing → { brain, confidence, matchedKeywords, reason }. brain may be
-  // null (no match / low confidence) — we then clarify / answer without a brain
-  // rather than silently defaulting to haji-core.
-  const route = effectiveBrainMode === "smart" ? routeToBrain(message) : null;
+  // null (no match / low confidence) — we then clarify / answer without a brain.
+  const route = effectiveBrainMode === "smart" ? routeToBrain(retrievalQuery) : null;
   const resolvedBrainSlug = route?.brain ?? null;
 
   // Greetings / low-information acknowledgements ("hi", "thanks", "ok") must not
@@ -110,7 +123,7 @@ export async function POST(req: Request) {
   const [convo, memory, tool, brainForSmart, writePermitted] = await Promise.all([
     getConversation(session.user.id, conversationId),
     wantRetrieval
-      ? buildMemoryContext(session.user.id, { query: message }).catch((err) => {
+      ? buildMemoryContext(session.user.id, { query: retrievalQuery }).catch((err) => {
           console.warn("[chat] memory context failed:", err);
           return EMPTY_MEMORY;
         })
@@ -153,7 +166,7 @@ export async function POST(req: Request) {
     projectId ? getProject(session.user.id, projectId) : Promise.resolve(null),
     wantKnowledge
       ? buildKnowledgeContext(session.user.id, {
-          query: message,
+          query: retrievalQuery,
           projectId,
           brainId: resolvedBrainId ?? undefined,
         }).catch((err) => {
@@ -293,6 +306,11 @@ export async function POST(req: Request) {
                     : memory.fallbackUsed
                     ? "keyword-fallback"
                     : "semantic",
+                  // Phase 5 — real retrieved source documents (never hallucinated).
+                  sources: [...new Set(knowledge.chunks.map((c) => c.title))],
+                  // Phase 3 — reference resolution outcome.
+                  referenceEntity: refInfo?.entity ?? null,
+                  referenceReason: refInfo?.reason ?? null,
                 },
               }
             : {}),

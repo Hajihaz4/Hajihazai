@@ -352,6 +352,12 @@ function DebugPanel({ meta }: { meta: NonNullable<Msg["meta"]> }) {
             retrieved → docs: {meta.knowledgeCount ?? 0} · memories: {meta.memoryCount ?? 0}
             {meta.retrievalMethod ? ` · method: ${meta.retrievalMethod}` : ""}
           </div>
+          {meta.sources && meta.sources.length ? (
+            <div>sources: {meta.sources.join(", ")}</div>
+          ) : null}
+          {meta.referenceEntity ? (
+            <div>reference → {meta.referenceEntity}</div>
+          ) : null}
         </div>
       ) : null}
     </div>
