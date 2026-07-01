@@ -99,6 +99,17 @@ export interface KnowledgeContext {
   count: number;
 }
 
+/** How strongly a document title matches the query (higher = float to top). */
+function titleScore(title: string, query: string): number {
+  const t = title.toLowerCase();
+  const q = query.toLowerCase();
+  if (t === q || t.includes(q)) return 100;
+  const toks = q.split(/[^a-z0-9]+/).filter((w) => w.length >= 3 || /^\d+$/.test(w));
+  let hits = 0;
+  for (const tok of toks) if (t.includes(tok)) hits++;
+  return hits;
+}
+
 /** Render the knowledge block grouped by document, capped at maxChars. */
 function renderKnowledgeBlock(selected: DocumentSearchHit[]): string {
   const order: string[] = [];
@@ -202,8 +213,13 @@ export async function buildKnowledgeContext(
 
   const hits = await searchScope(userId, query, opts.projectId, opts.brainId);
 
+  // Phase E — exact-title preference: float documents whose title matches the
+  // query to the front, keeping the semantic-then-keyword order for ties (stable
+  // sort). Dedup-by-document + semantic-first are already handled downstream.
+  const ranked = [...hits].sort((a, b) => titleScore(b.title, query) - titleScore(a.title, query));
+
   const { block, used, count } = buildKnowledgeBlock(
-    hits,
+    ranked,
     opts.maxChars ?? KNOWLEDGE_MAX_CHARS,
   );
 
