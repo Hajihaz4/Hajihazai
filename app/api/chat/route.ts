@@ -143,7 +143,7 @@ export async function POST(req: Request) {
   const smartUnrouted = effectiveBrainMode === "smart" && resolvedBrainId === null;
   const wantKnowledge = wantRetrieval && !smartUnrouted;
   const clarifyBlock = smartUnrouted && wantRetrieval
-    ? "SYSTEM: The smart router could not confidently pick a knowledge brain for this message. If the question clearly refers to the user's specific businesses (AllBee, Suplaykart), their personal/family life, or law, ask a brief clarifying question about which area they mean before answering. Otherwise answer normally from general knowledge."
+    ? "SYSTEM: The smart router could not confidently pick a knowledge brain for this message. If the message is an ambiguous role or entity reference — e.g. \"founder\", \"CEO\", \"ownership\", \"owner\" — without naming a company, ask which company or organization they mean (for example: \"Founder of what?\", \"CEO of which company?\", \"Ownership of which organization?\"). If it clearly refers to the user's specific businesses (AllBee, Suplaykart), personal/family life, or law, ask which area they mean. Otherwise answer normally from general knowledge."
     : "";
 
   // ── Phase 2: parallel lookups that depend on convo.projectId + brainId ──

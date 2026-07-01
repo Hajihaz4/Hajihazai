@@ -47,9 +47,6 @@ const BRAIN_RULES: Array<{ slug: string; keywords: readonly string[]; weight: nu
       // requested
       "allbee", "alim", "agency", "digital marketing", "branding",
       "website development", "software solutions",
-      // founder / ownership / leadership entity terms → AllBee Founders is the
-      // authoritative source (bare "founder?"/"ceo?"/"ownership?" must resolve here)
-      "founder", "ceo", "ownership", "owner", "owns",
       // existing (retained)
       "all bee", "client", "website", "web design", "marketing", "digital",
       "seo", "campaign", "freelance", "development", "ecommerce", "ui", "ux",
