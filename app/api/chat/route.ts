@@ -30,6 +30,7 @@ import { wrapToolOutput } from "@/lib/tools/output-guard";
 import type { ChatMessage } from "@/lib/ai/types";
 import { buildConversationTurns } from "@/lib/ai/conversation-turns";
 import { needsResolution, resolveReference } from "@/lib/ai/reference-resolution";
+import { detectMultiBrainScope } from "@/lib/ai/multi-brain";
 
 const CHAT_RATE_LIMIT = 30;
 const CHAT_RATE_WINDOW_MS = 60_000;
@@ -38,6 +39,34 @@ const TOOL_RESULT_MAX_CHARS = 10_000;
 
 function sse(obj: unknown): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(obj)}\n\n`);
+}
+
+/**
+ * Multi-brain retrieval (Phase 4): retrieve from several brains and merge.
+ * Brains are disjoint (a document belongs to one brain), so no cross-brain dedup
+ * is needed. Legal is excluded by the detector, preserving legal isolation.
+ */
+async function retrieveMultiBrain(
+  userId: string,
+  query: string,
+  projectId: string | null,
+  slugs: string[],
+) {
+  const brains = (
+    await Promise.all(slugs.map((s) => getBrainBySlug(s).catch(() => null)))
+  ).filter((b): b is NonNullable<typeof b> => b !== null);
+  const results = (
+    await Promise.all(
+      brains.map((b) =>
+        buildKnowledgeContext(userId, { query, projectId, brainId: b.id }).catch(() => null),
+      ),
+    )
+  ).filter((r): r is NonNullable<typeof r> => r !== null);
+  return {
+    block: results.map((r) => r.block).filter(Boolean).join("\n\n"),
+    chunks: results.flatMap((r) => r.chunks),
+    count: results.reduce((s, r) => s + r.count, 0),
+  };
 }
 
 export async function POST(req: Request) {
@@ -154,8 +183,13 @@ export async function POST(req: Request) {
   // the model to ask which area the user means when the question looks domain-
   // specific (Phase D — no silent routing).
   const smartUnrouted = effectiveBrainMode === "smart" && resolvedBrainId === null;
-  const wantKnowledge = wantRetrieval && !smartUnrouted;
-  const clarifyBlock = smartUnrouted && wantRetrieval
+  // Multi-brain (Phase 4): queries spanning brains ("compare AllBee and Suplaykart",
+  // "what businesses does Haji own") retrieve from several brains and merge. Empty
+  // = normal single-brain retrieval. Legal is excluded (isolation).
+  const multiBrains = effectiveBrainMode === "smart" ? detectMultiBrainScope(retrievalQuery) : [];
+  const isMulti = multiBrains.length >= 2;
+  const wantKnowledge = wantRetrieval && (isMulti || !smartUnrouted);
+  const clarifyBlock = smartUnrouted && !isMulti && wantRetrieval
     ? "SYSTEM: The smart router could not confidently pick a knowledge brain for this message. If the message is an ambiguous role or entity reference — e.g. \"founder\", \"CEO\", \"ownership\", \"owner\" — without naming a company, ask which company or organization they mean (for example: \"Founder of what?\", \"CEO of which company?\", \"Ownership of which organization?\"). If it clearly refers to the user's specific businesses (AllBee, Suplaykart), personal/family life, or law, ask which area they mean. Otherwise answer normally from general knowledge."
     : "";
 
@@ -165,11 +199,14 @@ export async function POST(req: Request) {
   const [project, knowledge, history, userMsgResult] = await Promise.all([
     projectId ? getProject(session.user.id, projectId) : Promise.resolve(null),
     wantKnowledge
-      ? buildKnowledgeContext(session.user.id, {
-          query: retrievalQuery,
-          projectId,
-          brainId: resolvedBrainId ?? undefined,
-        }).catch((err) => {
+      ? (isMulti
+          ? retrieveMultiBrain(session.user.id, retrievalQuery, projectId, multiBrains)
+          : buildKnowledgeContext(session.user.id, {
+              query: retrievalQuery,
+              projectId,
+              brainId: resolvedBrainId ?? undefined,
+            })
+        ).catch((err) => {
           console.warn("[chat] knowledge context failed:", err);
           return EMPTY_KNOWLEDGE;
         })
@@ -296,6 +333,7 @@ export async function POST(req: Request) {
                   brainId: resolvedBrainId,
                   brainSlug: resolvedBrainSlug,
                   brainMode: effectiveBrainMode,
+                  multiBrains: isMulti ? multiBrains : null,
                   brainConfidence: route?.confidence ?? null,
                   brainMatched: route?.matchedKeywords ?? null,
                   brainReason: route?.reason ?? (clarifyBlock ? "clarification requested" : null),
