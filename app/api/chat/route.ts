@@ -33,6 +33,7 @@ import type { ChatMessage } from "@/lib/ai/types";
 import { buildConversationTurns } from "@/lib/ai/conversation-turns";
 import { needsResolution, resolveReference } from "@/lib/ai/reference-resolution";
 import { detectMultiBrainScope } from "@/lib/ai/multi-brain";
+import { splitForDigest, renderConversationDigest } from "@/lib/ai/conversation-summary";
 
 const CHAT_RATE_LIMIT = 30;
 const CHAT_RATE_WINDOW_MS = 60_000;
@@ -219,7 +220,10 @@ export async function POST(req: Request) {
           return EMPTY_KNOWLEDGE;
         })
       : Promise.resolve(EMPTY_KNOWLEDGE),
-    listRecentMessages(conversationId, 20),
+    // Fetch a wider window so long conversations can be digested (older turns
+    // condensed) while the recent turns stay verbatim — see buildConversationTurns
+    // + renderConversationDigest below.
+    listRecentMessages(conversationId, 40),
     !debug && !regenerate
       ? addMessage({ conversationId, role: "user", content: message })
       : Promise.resolve(null),
@@ -227,6 +231,29 @@ export async function POST(req: Request) {
 
   const userMsg = userMsgResult;
   const projectInstructions = project?.instructions?.trim() ?? "";
+
+  // Retrieval analytics (admin) — a compact provenance record persisted on the
+  // assistant message's metadata column and later aggregated by the admin
+  // dashboard (brain usage, clarifications, zero-result/failed retrievals, top
+  // docs, top queries). Non-PII beyond a truncated echo of the user's own query.
+  const retrievalMeta = {
+    kind: "retrieval" as const,
+    brainSlug: resolvedBrainSlug,
+    brainMode: effectiveBrainMode,
+    multiBrains: isMulti ? multiBrains : null,
+    confidence: route?.confidence ?? null,
+    knowledgeCount: knowledge.count,
+    memoryCount: memory.count,
+    retrievalMethod: !wantKnowledge
+      ? "none"
+      : memory.fallbackUsed
+      ? "keyword-fallback"
+      : "semantic",
+    wasClarify: !!clarifyBlock,
+    wasZeroResult: wantKnowledge && knowledge.count === 0,
+    sources: [...new Set(knowledge.chunks.map((c) => c.title))],
+    query: message.trim().slice(0, 160),
+  };
 
   let toolBlock = "";
   if (tool.toolExecuted && tool.toolResult != null) {
@@ -245,7 +272,18 @@ export async function POST(req: Request) {
   // turn. Previously this relied on listRecentMessages() (which races the parallel
   // addMessage write) and only appended the current message in debug mode, so in
   // production the model answered the PREVIOUS turn. See lib/ai/conversation-turns.
-  const historyMessages: ChatMessage[] = buildConversationTurns(history, message, {
+  // Long-conversation summarization (Phase B): keep the recent turns verbatim and
+  // condense everything older into a compact recap that preserves entities, goals,
+  // and topics — bounding prompt size without losing continuity.
+  const { older, recent } = splitForDigest(history, 14);
+  // Summarization must never break chat — fall back to no recap on any error.
+  let digestBlock: string | null = null;
+  try {
+    digestBlock = older.length ? renderConversationDigest(older) : null;
+  } catch (err) {
+    console.warn("[chat] conversation digest failed:", err);
+  }
+  const historyMessages: ChatMessage[] = buildConversationTurns(recent, message, {
     regenerate,
     currentUserMessageId: userMsg?.id,
   });
@@ -260,6 +298,7 @@ export async function POST(req: Request) {
     ...(toolBlock ? [{ role: "system" as const, content: toolBlock }] : []),
     ...(writeIntentBlock ? [{ role: "system" as const, content: writeIntentBlock }] : []),
     ...(clarifyBlock ? [{ role: "system" as const, content: clarifyBlock }] : []),
+    ...(digestBlock ? [{ role: "system" as const, content: digestBlock }] : []),
     ...historyMessages,
   ];
 
@@ -295,6 +334,7 @@ export async function POST(req: Request) {
             role: "assistant",
             content: fullText.trimEnd() + "\n\n*[Response interrupted]*",
             modelId: streamResult.modelId,
+            metadata: retrievalMeta,
           }).catch(() => {});
         }
         const isTimeout = (err as { timedOut?: boolean }).timedOut === true;
@@ -314,6 +354,7 @@ export async function POST(req: Request) {
           role: "assistant",
           content: fullText,
           modelId: streamResult.modelId,
+          metadata: retrievalMeta,
         });
         assistantMsgId = assistantMsg.id;
         if (convo.title === "New chat") {
@@ -347,13 +388,10 @@ export async function POST(req: Request) {
                   brainReason: route?.reason ?? (clarifyBlock ? "clarification requested" : null),
                   knowledgeCount: knowledge.count,
                   memoryCount: memory.count,
-                  retrievalMethod: !wantKnowledge
-                    ? "none"
-                    : memory.fallbackUsed
-                    ? "keyword-fallback"
-                    : "semantic",
+                  // Reuse the single source-of-truth provenance computed above.
+                  retrievalMethod: retrievalMeta.retrievalMethod,
                   // Phase 5 — real retrieved source documents (never hallucinated).
-                  sources: [...new Set(knowledge.chunks.map((c) => c.title))],
+                  sources: retrievalMeta.sources,
                   // Phase 3 — reference resolution outcome.
                   referenceEntity: refInfo?.entity ?? null,
                   referenceReason: refInfo?.reason ?? null,

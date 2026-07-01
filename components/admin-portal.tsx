@@ -67,6 +67,16 @@ type Analytics = {
     dailyMessages: Array<{ date: string; count: number }>;
     dailyKnowledgeUpdates: Array<{ date: string; count: number }>;
   };
+  retrieval?: {
+    totalTurns: number;
+    brainUsage: Array<{ brain: string; count: number }>;
+    retrievalMethods: { semantic: number; keywordFallback: number; none: number };
+    clarification: { count: number; rate: number };
+    zeroResults: { count: number; rate: number; recentQueries: string[] };
+    failedRetrievals: number;
+    topDocuments: Array<{ title: string; count: number }>;
+    topQueries: Array<{ query: string; count: number }>;
+  };
 };
 
 type UserRow = {
@@ -743,6 +753,89 @@ export default function AdminPortal() {
               <BarChart data={analytics.charts.dailyMessages} label="Daily Messages (7d)" />
               <BarChart data={analytics.charts.dailyKnowledgeUpdates} label="Knowledge Updates (7d)" />
             </div>
+          )}
+
+          {analytics.retrieval && (
+            <section className="rounded-xl border p-4">
+              <h2 className="mb-3 text-sm font-semibold">
+                Retrieval Analytics{" "}
+                <span className="font-normal text-muted-foreground">
+                  ({analytics.retrieval.totalTurns.toLocaleString()} turns · 30d)
+                </span>
+              </h2>
+              <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {[
+                  { label: "Clarifications", value: `${analytics.retrieval.clarification.count} (${Math.round(analytics.retrieval.clarification.rate * 100)}%)` },
+                  { label: "Failed / Zero-result", value: `${analytics.retrieval.failedRetrievals} (${Math.round(analytics.retrieval.zeroResults.rate * 100)}%)` },
+                  { label: "Semantic hits", value: analytics.retrieval.retrievalMethods.semantic },
+                  { label: "Keyword fallback", value: analytics.retrieval.retrievalMethods.keywordFallback },
+                ].map(({ label, value }) => (
+                  <div key={label} className="rounded-xl border p-3 text-center">
+                    <p className="text-lg font-semibold tabular-nums">{typeof value === "number" ? value.toLocaleString() : value}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{label}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Brain Usage</p>
+                  {analytics.retrieval.brainUsage.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No data yet.</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {analytics.retrieval.brainUsage.map((b) => (
+                        <li key={b.brain} className="flex justify-between text-sm">
+                          <span className="capitalize">{b.brain}</span>
+                          <span className="tabular-nums text-muted-foreground">{b.count}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Top Documents</p>
+                  {analytics.retrieval.topDocuments.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No data yet.</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {analytics.retrieval.topDocuments.map((d) => (
+                        <li key={d.title} className="flex justify-between gap-2 text-sm">
+                          <span className="truncate">{d.title}</span>
+                          <span className="tabular-nums text-muted-foreground">{d.count}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Top Queries</p>
+                  {analytics.retrieval.topQueries.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No data yet.</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {analytics.retrieval.topQueries.map((q) => (
+                        <li key={q.query} className="flex justify-between gap-2 text-sm">
+                          <span className="truncate">{q.query}</span>
+                          <span className="tabular-nums text-muted-foreground">{q.count}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Recent Zero-Result Queries</p>
+                  {analytics.retrieval.zeroResults.recentQueries.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">None — every retrieval returned context.</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {analytics.retrieval.zeroResults.recentQueries.map((q, i) => (
+                        <li key={`${q}-${i}`} className="truncate text-sm text-muted-foreground">{q}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </section>
           )}
         </div>
       )}

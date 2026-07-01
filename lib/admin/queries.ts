@@ -25,6 +25,7 @@ import {
 } from "@/lib/db/schema";
 import { isUniqueViolation } from "@/lib/db/credential-queries";
 import { hashPassword } from "@/lib/auth/password";
+import { getRetrievalAnalytics, computeRetrievalAnalytics, type RetrievalAnalytics } from "@/lib/admin/analytics";
 
 /** Admin data layer. Admin identity is DB-driven (no ADMIN_EMAILS env). */
 
@@ -508,6 +509,8 @@ export interface AdminAnalyticsV2 {
     dailyMessages: Array<{ date: string; count: number }>;
     dailyKnowledgeUpdates: Array<{ date: string; count: number }>;
   };
+  /** Retrieval quality metrics aggregated from assistant-message provenance. */
+  retrieval: RetrievalAnalytics;
 }
 
 export async function getAdminAnalyticsV2(): Promise<AdminAnalyticsV2> {
@@ -515,6 +518,9 @@ export async function getAdminAnalyticsV2(): Promise<AdminAnalyticsV2> {
   todayStart.setHours(0, 0, 0, 0);
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+  // Kicked off in parallel with the counts below; degrades to empty on error.
+  const retrievalPromise = getRetrievalAnalytics().catch(() => computeRetrievalAnalytics([]));
 
   const [
     [{ cnt: totalUsers }],
@@ -585,6 +591,7 @@ export async function getAdminAnalyticsV2(): Promise<AdminAnalyticsV2> {
       dailyMessages: dailyMessages.map((r) => ({ date: r.date, count: Number(r.count) })),
       dailyKnowledgeUpdates: dailyKnowledgeUpdates.map((r) => ({ date: r.date, count: Number(r.count) })),
     },
+    retrieval: await retrievalPromise,
   };
 }
 

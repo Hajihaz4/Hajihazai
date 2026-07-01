@@ -109,6 +109,8 @@ export async function addMessage(input: {
   role: "user" | "assistant" | "system";
   content: string;
   modelId?: string;
+  /** Per-message provenance (retrieval analytics on assistant replies). */
+  metadata?: Record<string, unknown>;
 }) {
   const [row] = await db.insert(messages).values(input).returning();
   // Bump the conversation so it sorts to the top of the sidebar.
